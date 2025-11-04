@@ -1,0 +1,39 @@
+<mujoco model="franka_pick_and_place">
+
+  <compiler angle="radian" meshdir="../franka/assets" autolimits="true"/>
+
+  <option integrator="implicitfast"/>
+
+  <asset>
+    <material name="table_mat" />
+    <material name="bottle_mat" />
+  </asset>
+
+  <worldbody>
+    <light name="top" pos="0 0 2" mode="trackcom"/>
+
+    <geom type="plane" size="1.5 1.5 0.1" rgba="0.8 0.8 0.8 1" />
+
+    <body name="robot_pedestal" pos="-0.4 0 0.4">
+      <geom type="box" size="0.4 0.4 0.4" material="table_mat" rgba="0.3 0.3 0.3 1"
+            friction="0.8 0.005 0.0001"/>
+    </body>
+
+    <body name="task_table" pos="0.5 0 0.4">
+      <geom type="box" size="0.6 0.6 0.4" material="table_mat" rgba="0.5 0.5 0.5 1"
+            friction="0.8 0.005 0.0001"/>
+    </body>
+
+    <body name="bottle" pos="0.5 0.1 0.88">
+      <joint type="free" damping="0.005" />
+      <geom name="bottle_geom" type="cylinder" size="0.03 0.08"
+            material="bottle_mat" mass="0.5" rgba="0.1 0.1 1 0.7"
+            friction="0.4 0.005 0.0001"/>
+    </body>
+
+    <body name="robot_base" pos="-0.4 0 0.8">
+      <include file="panda_robot.xml"/>
+    </body>
+
+  </worldbody>
+</mujoco>

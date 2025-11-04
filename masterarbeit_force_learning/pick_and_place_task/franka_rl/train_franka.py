@@ -57,7 +57,7 @@ class FrankaPushEnv(gym.Env):
 
         # Define a goal position for the bottle
         self.goal_pos = np.array([0.7, 0.0, 0.88]) # Goal on the task table
-
+main
 
     def _get_obs(self):
         # Robot state (first 7 joints)
