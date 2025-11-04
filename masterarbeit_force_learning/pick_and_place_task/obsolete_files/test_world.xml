@@ -1,0 +1,10 @@
+<mujoco model="test_franka">
+
+  <worldbody>
+    <geom type="plane" size="1 1 0.1" rgba="0.8 0.8 0.8 1" />
+    <light pos="0 0 3" />
+
+    <include file="franka/scene.xml" />
+  </worldbody>
+
+</mujoco>
