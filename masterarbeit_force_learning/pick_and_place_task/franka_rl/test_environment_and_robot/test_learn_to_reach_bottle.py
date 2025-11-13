@@ -8,7 +8,7 @@ env = PandaPushEnv(render_mode="human")
 print("Environment created.")
 
 # --- 2. Load Model ---
-model_path = "panda_reach_model.zip"
+model_path = "panda_reach_model2.zip"
 try:
     model = PPO.load(model_path, env=env)
     print(f"Model loaded from {model_path}")

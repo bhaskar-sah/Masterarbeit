@@ -95,8 +95,20 @@ class PandaPushEnv(gym.Env):
         return observations, info
 
     def step(self, action):
-        scaled_action = self.act_low + (action + 1.0) * 0.5 * (self.act_high - self.act_low)
-        self.data.ctrl[:7] = scaled_action
+        max_step_size = 0.01
+        delta_action = action * max_step_size
+
+        # Get the robot's current joint positions
+        current_qpos = self.data.qpos[7:14]
+
+        # Calculate the new target position by adding the delta
+        new_target_qpos = current_qpos + delta_action
+
+        # Clip the new target to make sure it's within the robot's joint limits
+        clipped_target_qpos = np.clip(new_target_qpos, self.act_low, self.act_high)
+
+        # Set this new clipped target as the control command
+        self.data.ctrl[:7] = clipped_target_qpos
 
         for _ in range(50):
             mujoco.mj_step(self.model, self.data)
