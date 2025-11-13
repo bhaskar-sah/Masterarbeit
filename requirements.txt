@@ -1,0 +1,5 @@
+gymnasium~=1.2.1
+numpy~=2.3.4
+mujoco~=3.3.7
+stable-baselines3~=2.7.0
+sympy~=1.14.0
