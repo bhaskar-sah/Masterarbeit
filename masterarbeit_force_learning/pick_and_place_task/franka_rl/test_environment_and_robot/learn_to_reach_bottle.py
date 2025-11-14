@@ -24,6 +24,7 @@ class PandaPushEnv(gym.Env):
 
         self.bottle_body_id = self.model.body("bottle").id
         self.gripper_site_id = self.model.site("gripper_site").id
+        self.target_site_id = self.model.site("goal").id
         self.bottle_joint_adr = self.model.jnt("bottle_joint").qposadr[0]
 
         actuator_ranges = self.model.actuator_ctrlrange[:7, :]
@@ -42,7 +43,7 @@ class PandaPushEnv(gym.Env):
         self.observation_space = spaces.Box(
             low = -np.inf,
             high = np.inf,
-            shape = (20,),
+            shape = (23,),
             dtype=np.float32
         )
 
@@ -53,25 +54,39 @@ class PandaPushEnv(gym.Env):
     def _get_obs(self):
         gripper_pos = self.data.site_xpos[self.gripper_site_id]
         bottle_pos = self.data.xpos[self.bottle_body_id]
+        goal_pos = self.data.site_xpos[self.target_site_id]
 
         return np.concatenate([
             self.data.qpos[7:14],
             self.data.qvel[6:13],
             gripper_pos,
-            bottle_pos
+            bottle_pos,
+            goal_pos
         ]).astype(np.float32)
 
     def _get_reward(self):
         gripper_pos = self.data.site_xpos[self.gripper_site_id]
         bottle_pos = self.data.xpos[self.bottle_body_id]
+        goal_pos = self.data.site_xpos[self.target_site_id]
 
         dist_gripper_to_bottle = np.linalg.norm(gripper_pos - bottle_pos)
-        reward_gripper = -0.1 * dist_gripper_to_bottle
+        # reward_gripper = -0.1 * dist_gripper_to_bottle
+
+        dist_bottle_to_goal = np.linalg.norm(bottle_pos - goal_pos)
+
+        reach_threshold = 0.08
+        if dist_gripper_to_bottle > reach_threshold:
+            reward = -dist_gripper_to_bottle
+        else:
+            reward = -dist_bottle_to_goal + 0.5
+
+        # dist_gripper_to_bottle = np.linalg.norm(gripper_pos - bottle_pos)
+        # reward_reach = -0.1 * dist_gripper_to_bottle
 
         reward_velocity = -0.01 * np.linalg.norm(self.data.qvel[6:13])
         reward_action = -0.001 * np.linalg.norm(self.data.ctrl[:7])
 
-        reward = reward_gripper + reward_velocity + reward_action
+        reward += (reward_velocity + reward_action)
 
         return reward
 
@@ -117,10 +132,14 @@ class PandaPushEnv(gym.Env):
         reward = self._get_reward()
 
         self.episode_length += 1
-        dist_gripper_to_bottle = np.linalg.norm(
-            self.data.site_xpos[self.gripper_site_id] - self.data.xpos[self.bottle_body_id]
-        )
-        terminated = bool(dist_gripper_to_bottle < 0.05)
+        # dist_gripper_to_bottle = np.linalg.norm(self.data.site_xpos[self.gripper_site_id] - self.data.xpos[self.bottle_body_id])
+        # terminated = bool(dist_gripper_to_bottle < 0.05)
+
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+        goal_pos = self.data.site_xpos[self.target_site_id]
+        dist_bottle_to_goal = np.linalg.norm(bottle_pos - goal_pos)
+
+        terminated = bool(dist_bottle_to_goal < 0.05)
         truncated = bool(self.episode_length >= 500)  # Max 500 steps
 
         info = {}

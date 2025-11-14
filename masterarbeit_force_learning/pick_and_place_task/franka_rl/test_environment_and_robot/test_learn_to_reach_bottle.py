@@ -8,7 +8,7 @@ env = PandaPushEnv(render_mode="human")
 print("Environment created.")
 
 # --- 2. Load Model ---
-model_path = "panda_reach_model2.zip"
+model_path = "panda_reach_model5.zip"
 try:
     model = PPO.load(model_path, env=env)
     print(f"Model loaded from {model_path}")
@@ -19,7 +19,7 @@ except Exception as e:
 
 # --- 3. Run Test Episodes ---
 print("Running test episodes...")
-num_episodes = 10
+num_episodes = 30
 
 for episode in range(num_episodes):
     obs, info = env.reset()
