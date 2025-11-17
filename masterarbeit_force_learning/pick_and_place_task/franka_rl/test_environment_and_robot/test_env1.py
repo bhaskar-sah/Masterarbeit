@@ -23,9 +23,24 @@ try:
     # mujoco.mj_resetDataKeyframe(self.model, self.data, self.home_key_id
 
 
-    # mujoco.mj_forward(model, data)
+    mujoco.mj_forward(model, data)
     # time.sleep(0.1)
     print("Robot set to 'home' keyframe position")
+
+    body_names = ["robot_pedestal", "task_table", "bottle", "link0"]
+    print("\n--- Component Origins (xpos) ---")
+
+    for name in body_names:
+        # Get the ID of the body by its name
+        body_id = model.body(name).id
+
+        # Access the position (x, y, z) and orientation (rotation matrix)
+        position = data.xpos[body_id]
+        orientation_matrix = data.xmat[body_id].reshape(3, 3)
+
+        print(f"Body: '{name}' (ID: {body_id})")
+        print(f"  Position (x, y, z): {position}")
+        print(f"  Orientation Matrix (3x3):\n{orientation_matrix}\n")
 
     mujoco.viewer.launch(model, data)
 

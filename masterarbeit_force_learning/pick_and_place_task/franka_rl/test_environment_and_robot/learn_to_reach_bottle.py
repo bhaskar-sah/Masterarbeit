@@ -27,6 +27,9 @@ class PandaPushEnv(gym.Env):
         self.target_site_id = self.model.site("goal").id
         self.bottle_joint_adr = self.model.jnt("bottle_joint").qposadr[0]
 
+        self.robot_base_xy = np.array([-0.4, 0.0])
+        self.safe_radius = 0.8 # 1.0 previous data, but it iw wrong. Real max 0.855
+
         actuator_ranges = self.model.actuator_ctrlrange[:7, :]
         self.act_low = actuator_ranges[:, 0]
         self.act_high = actuator_ranges[:, 1]
@@ -69,26 +72,57 @@ class PandaPushEnv(gym.Env):
         bottle_pos = self.data.xpos[self.bottle_body_id]
         goal_pos = self.data.site_xpos[self.target_site_id]
 
-        dist_gripper_to_bottle = np.linalg.norm(gripper_pos - bottle_pos)
+        bottle_base_target_pos = bottle_pos.copy()
+        bottle_base_target_pos[2] = 0.84
+
+        dist_gripper_to_bottle_base = np.linalg.norm(gripper_pos - bottle_base_target_pos)
         # reward_gripper = -0.1 * dist_gripper_to_bottle
 
         dist_bottle_to_goal = np.linalg.norm(bottle_pos - goal_pos)
 
-        reach_threshold = 0.08
-        if dist_gripper_to_bottle > reach_threshold:
-            reward = -dist_gripper_to_bottle
-        else:
-            reward = -dist_bottle_to_goal + 0.5
+        # --- 3. Define the Reward Components ---
+        # We use the "sharpened" values from before
 
-        # dist_gripper_to_bottle = np.linalg.norm(gripper_pos - bottle_pos)
-        # reward_reach = -0.1 * dist_gripper_to_bottle
+        # This is the "maintain contact" reward.
+        # It's always active.
+        reward_reach = -dist_gripper_to_bottle_base * 2.0
 
+        # This is the "jackpot" for pushing.
+        # It's only active when we're close.
+        reward_push_jackpot = -dist_bottle_to_goal + 2.0
+
+        # Penalties for smooth motion
         reward_velocity = -0.01 * np.linalg.norm(self.data.qvel[6:13])
-        reward_action = -0.001 * np.linalg.norm(self.data.ctrl[:7])
+        reward_action = -0.01 * np.linalg.norm(self.data.ctrl[:7])
 
+        # --- 4. NEW Additive Reward Logic (Based on YOUR idea) ---
+
+        # The agent is ALWAYS rewarded for being close to the bottle's base.
+        reward = reward_reach
+
+        # Set the "contact" threshold
+        contact_threshold = 0.02  # 8 cm
+
+        # IF the agent is "in contact" (close enough),
+        # it ALSO gets the reward for pushing to the goal.
+        if dist_gripper_to_bottle_base < contact_threshold:
+            reward += reward_push_jackpot
+
+        # ALWAYS apply the penalties
         reward += (reward_velocity + reward_action)
 
         return reward
+
+    def _get_random_safe_pos(self):
+        while True:
+            x = self.np_random.uniform(low=0.1, high=0.6)
+            y = self.np_random.uniform(low=-0.4, high=0.4)
+            pos_xy = np.array([x, y])
+
+            dist_from_base = np.linalg.norm(pos_xy -self.robot_base_xy)
+
+            if dist_from_base < self.safe_radius:
+                return pos_xy
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -97,10 +131,18 @@ class PandaPushEnv(gym.Env):
         self.data.qvel[:] = self.init_qvel
         mujoco.mj_forward(self.model, self.data)
 
-        random_x = self.np_random.uniform(low=0.4, high=0.6)
-        random_y = self.np_random.uniform(low=-0.1, high=0.1)
+        while True:
+            goal_xy = self._get_random_safe_pos()
+            bottle_xy = self._get_random_safe_pos()
+            if np.linalg.norm(goal_xy - bottle_xy) > 0.15:
+                break
 
-        self.data.qpos[self.bottle_joint_adr : self.bottle_joint_adr + 3] = [random_x, random_y, 0.88]
+        # random_x = self.np_random.uniform(low=0.4, high=0.6)
+        # random_y = self.np_random.uniform(low=-0.1, high=0.1)
+
+        self.data.qpos[self.bottle_joint_adr : self.bottle_joint_adr + 3] = [bottle_xy[0], bottle_xy[1], 0.88]
+
+        self.model.site_pos[self.target_site_id] = [goal_xy[0], goal_xy[1], 0.82]
 
         self.episode_length = 0
 

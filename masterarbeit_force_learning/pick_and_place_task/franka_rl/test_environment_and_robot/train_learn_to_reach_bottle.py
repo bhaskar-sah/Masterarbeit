@@ -26,11 +26,11 @@ model = PPO("MlpPolicy", env, verbose=1)
 print("Starting training...")
 # 100,000 steps is a good start. For a harder task, you might need 1,000,000+.
 # This will take a few minutes.
-model.learn(total_timesteps=100000)
+model.learn(total_timesteps=2000000)
 
 # --- 4. Save Model ---
 # The model will be saved as "panda_reach_model.zip"
-model_save_path = "panda_reach_model5"
+model_save_path = "panda_reach_model6_with_1_2m_dist_4_with_0_85"
 model.save(model_save_path)
 
 env.close()
