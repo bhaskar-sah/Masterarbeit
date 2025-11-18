@@ -131,8 +131,10 @@ class PandaPushEnv(gym.Env):
         self.data.qvel[:] = self.init_qvel
         mujoco.mj_forward(self.model, self.data)
 
+        goal_xy = np.array([0.5, 0.0])
+
         while True:
-            goal_xy = self._get_random_safe_pos()
+            # goal_xy = self._get_random_safe_pos()
             bottle_xy = self._get_random_safe_pos()
             if np.linalg.norm(goal_xy - bottle_xy) > 0.15:
                 break
