@@ -1,7 +1,7 @@
 <mujoco model="franka_pick_and_place_task">
   <compiler angle="radian" meshdir="../franka/assets" autolimits="true"/>
 
-  <option integrator="implicitfast"/>
+  <option integrator="implicitfast" timestep="0.005" iterations="50" ls_iterations="50" solver="Newton" tolerance="1e-6"/>
 
   <default>
     <default class="panda">
@@ -134,14 +134,17 @@
             friction="0.8 0.005 0.0001"/>
     </body>
 
-    <body name="bottle" pos="0.5 0.0 1.5">
-      <joint name="bottle_joint" type="free" damping="0.005" />
-      <geom name="bottle_geom" type="cylinder" size="0.03 0.08"
+    <body name="bottle" pos="0 0 0.8">  <!-- Frame at bottom -->
+      <!-- Only XY translation, no rotation -->
+      <joint name="bottle_slide_x" type="slide" axis="1 0 0" damping="5.0"/>
+      <joint name="bottle_slide_y" type="slide" axis="0 1 0" damping="5.0"/>
+
+      <geom name="bottle_geom" type="cylinder" size="0.03 0.08" pos="0 0 0.08"
           material="bottle_mat" mass="0.5" rgba="0.1 0.1 1 0.7"
-          friction="0.4 0.005 0.0001"/>
+          friction="1.0 0.1 0.001"/>
     </body>
     <!-- -->
-    <site name="goal" pos="0.4 -0.3 0.82" size="0.02" rgba="0.8 0.1 0.1 0.7"/>
+    <site name="goal" pos="0.2 -0.2 0.82" size="0.02" rgba="0.8 0.1 0.1 0.7"/>
 
     <body name="link0" childclass="panda" pos="-0.4 0 0.8">
       <inertial mass="0.629769" pos="-0.041018 -0.00014 0.049974"
@@ -305,7 +308,7 @@
   </actuator>
 
   <keyframe>
-    <key name="home" qpos="0.4 0.0 0.88 1 0 0 0 0 0 0 -1.57079 0 1.57079 -0.7853 0 0" ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 0"/> <!-- for the gripper to be open the last vaues to [0.04 0.04] andn to [255], furthermore remove oben the range="0 0"-->
+    <key name="home" qpos="0.2 0.2 0 0 0 -1.57079 0 1.57079 -0.7853 0 0" ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 0"/>
   </keyframe>
 
   <contact>

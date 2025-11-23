@@ -1,6 +1,6 @@
 import time
 from stable_baselines3 import PPO
-from learn_to_reach_bottle import PandaPushEnv  # Import your custom environment
+from reach_bottle import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # We MUST use render_mode="human" to see the simulation
@@ -8,7 +8,7 @@ env = PandaPushEnv(render_mode="human")
 print("Environment created.")
 
 # --- 2. Load Model ---
-model_path = "panda_reach_model6_with_1_2m_dist_5_with_0_85.zip"
+model_path = "reach_bottle_12_changed_rewardfkt_added_actu7_no_rotation.zip"
 try:
     model = PPO.load(model_path, env=env)
     print(f"Model loaded from {model_path}")
