@@ -46,7 +46,7 @@ class PandaPushEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(17,),  # 7 qpos + 7 qvel + 3 target
+            shape=(21,),  # 7 qpos + 7 qvel + 3 target + 4 hand Quat (w, x, y, z)
             dtype=np.float32
         )
 
@@ -68,10 +68,13 @@ class PandaPushEnv(gym.Env):
 
         relative_vec = reach_target - hand_pos
 
+        hand_quat = self.data.xquat[self.hand_body_id]
+
         return np.concatenate([
             self.data.qpos[7:14],  # Robot joints (7)
             self.data.qvel[6:13],  # Robot velocities (7)
-            relative_vec  # Target position (3)
+            relative_vec,  # Target position (3)
+            hand_quat
         ]).astype(np.float32)
 
     def _get_target_pos(self):
@@ -87,31 +90,48 @@ class PandaPushEnv(gym.Env):
         else:
             direction = vec / dist
 
-        reach_target = bottle_pos - (direction * 0.12)
-        reach_target[2] = 0.88
+        reach_target = bottle_pos - (direction * 0.18) # instead of 0.12
+        reach_target[2] = 0.99 # table (0.80) + 0.08 + 0.11
         return reach_target, direction
 
     def _get_reward(self):
         reach_target, push_dir = self._get_target_pos()
         hand_pos = self.data.xpos[self.hand_body_id]
+        hand_mat = self.data.xmat[self.hand_body_id].reshape(3,3)
 
         distance = np.linalg.norm(hand_pos - reach_target)
         reward_dist = 1.0 - np.tanh(5.0 * distance)
 
-        hand_rot = self.data.xmat[self.hand_body_id].reshape(3,3)
-        hand_x = hand_rot[:, 0]
-        hand_x[2] = 0
-        hand_x = hand_x / (np.linalg.norm(hand_x) + 1e-8)
+        hand_push_axis = hand_mat[:, 2]
 
-        alignment = np.dot(hand_x, push_dir)
-        reward_align = (alignment + 1) / 2.0
+        # Project to horizontal plane for fair comparison
+        hand_push_horizontal = hand_push_axis.copy()
+        hand_push_horizontal[2] = 0
+        norm = np.linalg.norm(hand_push_horizontal)
+        if norm > 1e-6:
+            hand_push_horizontal /= norm
+
+        alignment = np.dot(hand_push_horizontal, push_dir)
+        reward_align = (alignment + 1.0) / 2.0
+
+        # hand_rot = self.data.xmat[self.hand_body_id].reshape(3,3)
+        # hand_x = hand_rot[:, 0]
+        # hand_x[2] = 0
+        # hand_x = hand_x / (np.linalg.norm(hand_x) + 1e-8)
+
+        # alignment = np.dot(hand_x, push_dir)
+        # reward_align = (alignment + 1) / 2.0
+
+        # CURRICULUM: Alignment only kicks in when close
+        proximity_gate = np.exp(-10.0 * distance)  # ~1 when close, ~0 when far
+        gated_align_reward = proximity_gate * reward_align
 
         reward_ctrl = -0.01 * np.square(self.data.ctrl[:7]).sum()
 
-        total_reward = (2.0 * reward_dist) + (0.5 * reward_align) + reward_ctrl
+        total_reward = (2.0 * reward_dist) + (1.5 * reward_align) + reward_ctrl
 
         info = {"is_success": False}
-        if distance < 0.02:
+        if distance < 0.05 and alignment > 0.9:
             total_reward += 5.0
             info["is_success"] = True
 
@@ -135,7 +155,7 @@ class PandaPushEnv(gym.Env):
 
     def step(self, action):
         # Small step size for smooth motion
-        step_size = 0.01 # before 0.01
+        step_size = 0.005 # before 0.01
         self.current_ctrl = self.current_ctrl + (action * step_size)
         # Clip to hardware limits
         self.current_ctrl = np.clip(self.current_ctrl, self.act_low, self.act_high)
