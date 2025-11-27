@@ -54,11 +54,16 @@ class PandaPushEnv(gym.Env):
         self.viewer = None
         self.episode_length = 0
 
+        # store initial bottle position and computed targets (set in reset)
+        self.initial_bottle_pos = None
+        self.reach_target = None
+        self.push_dir = None
+
     def _get_obs(self):
         """Simple observation: robot state + target position"""
         # bottle_pos = self.data.xpos[self.bottle_body_id]
         # target_goal_pos = self.data.xpos[self.target_site_id]
-        reach_target, bottle_pos, _ = self._get_target_pos()
+        # reach_target, bottle_pos, _ = self._get_target_pos()
         hand_pos = self.data.xpos[self.hand_body_id]
 
         # Calculate HORIZONTAL push direction
@@ -66,7 +71,7 @@ class PandaPushEnv(gym.Env):
         # bottle_to_goal_vec[2] = 0  # Zero out Z - horizontal only
         # bottle_to_goal_dist = np.linalg.norm(bottle_to_goal_vec)
 
-        relative_vec = reach_target - hand_pos
+        relative_vec = self.reach_target - hand_pos
 
         hand_quat = self.data.xquat[self.hand_body_id]
 
@@ -79,25 +84,47 @@ class PandaPushEnv(gym.Env):
 
     def _get_target_pos(self):
         bottle_pos = self.data.xpos[self.bottle_body_id]
-        target_goal_pos = self.data.xpos[self.target_site_id]
+        # target_goal_pos = self.data.xpos[self.target_site_id]
+
+        # Hardcode goal position from XML since site_xpos returns [0,0,0]
+        target_goal_pos = np.array([0.4, -0.2, 0.80])
+
+        # DEBUG - print raw values
+        print(f"DEBUG bottle_pos: {bottle_pos}")
+        print(f"DEBUG target_goal_pos: {target_goal_pos}")
+        print(f"DEBUG target_site_id: {self.target_site_id}")
 
         vec = target_goal_pos - bottle_pos
+
+        print(f"DEBUG vec before zeroing Z: {vec}")
+
         vec[2] = 0 # ignore z
         dist = np.linalg.norm(vec)
+
+        print(f"DEBUG vec after zeroing Z: {vec}, dist: {dist}")
 
         if dist < 1e-6:
             direction = np.array([1.0, 0.0, 0.0])
         else:
             direction = vec / dist
 
+        print(f"DEBUG direction: {direction}")
+
         reach_target = bottle_pos - (direction * 0.18) # instead of 0.12
-        reach_target[2] = 0.99 # table (0.80) + 0.08 + 0.11
-        return reach_target, bottle_pos, direction
+        reach_target[2] = 0.95 # table (0.80) + 0.08 + 0.11
+
+        print(f"DEBUG reach_target: {reach_target}")
+
+        return reach_target, bottle_pos.copy(), direction
 
     def _get_reward(self):
-        reach_target, bottle_pos, push_dir = self._get_target_pos()
+        # reach_target, bottle_pos, push_dir = self._get_target_pos()
         hand_pos = self.data.xpos[self.hand_body_id]
         hand_mat = self.data.xmat[self.hand_body_id].reshape(3, 3)
+
+        # Use pre-computed values (from initial bottle position)
+        reach_target = self.reach_target
+        push_dir = self.push_dir
 
         # === 1. DISTANCE TO TARGET (XY only) ===
         distance_xy = np.linalg.norm(hand_pos[:2] - reach_target[:2])
@@ -114,18 +141,18 @@ class PandaPushEnv(gym.Env):
         reward_z_down = (z_alignment + 1.0) / 2.0
 
         # === 4. ORIENTATION B: Try POSITIVE X axis instead ===
-        hand_x = -hand_mat[:, 0]  # Try +X instead of -X
+        hand_neg_x = -hand_mat[:, 0]  # Try +X instead of -X
 
         # Project to horizontal
-        hand_x_horiz = hand_x.copy()
-        hand_x_horiz[2] = 0
-        norm = np.linalg.norm(hand_x_horiz)
+        hand_neg_x_horiz = hand_neg_x.copy()
+        hand_neg_x_horiz[2] = 0
+        norm = np.linalg.norm(hand_neg_x_horiz)
         if norm > 1e-6:
-            hand_x_horiz /= norm
+            hand_neg_x_horiz /= norm
         else:
-            hand_x_horiz = np.array([1.0, 0.0, 0.0])
+            hand_neg_x_horiz = np.array([0.0, -1.0, 0.0])
 
-        push_alignment = np.dot(hand_x_horiz, push_dir)
+        push_alignment = np.dot(hand_neg_x_horiz, push_dir)
         reward_push_align = (push_alignment + 1.0) / 2.0
 
         # === 5. CONTROL PENALTY ===
@@ -147,32 +174,29 @@ class PandaPushEnv(gym.Env):
         if self.episode_length % 50 == 0:
             # Also print all three axes to see which one we should use
             hand_y = hand_mat[:, 1]
+            current_bottle_pos = self.data.xpos[self.bottle_body_id]
             print(f"\n{'=' * 60}")
             print(f"Step: {self.episode_length}")
             print(f"{'=' * 60}")
-            print(f"Hand pos:    [{hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f}]")
-            print(f"Bottle pos:    [{bottle_pos[0]:.3f}, {bottle_pos[1]:.3f}, {bottle_pos[2]:.3f}]")
-            print(f"Target pos:  [{reach_target[0]:.3f}, {reach_target[1]:.3f}, {reach_target[2]:.3f}]")
+            print(f"Hand pos:           [{hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f}]")
+            print(f"Initial bottle pos: [{self.initial_bottle_pos[0]:.3f}, {self.initial_bottle_pos[1]:.3f}, {self.initial_bottle_pos[2]:.3f}]")
+            print(f"Current bottle pos: [{current_bottle_pos[0]:.3f}, {current_bottle_pos[1]:.3f}, {current_bottle_pos[2]:.3f}]")
+            print(f"Reach target:       [{reach_target[0]:.3f}, {reach_target[1]:.3f}, {reach_target[2]:.3f}]")
             print(f"-" * 60)
             print(f"Distance XY:      {distance_xy:.4f}")
             print(f"Height error:     {height_error:.4f}")
             print(f"Z-down alignment: {z_alignment:.4f}")
-            print(f"Push alignment:   {push_alignment:.4f}")
+            print(f"Push alignment:   {push_alignment:.4f} (hand -Y • push_dir)")
             print(f"-" * 60)
             print(f"Push dir:    [{push_dir[0]:.3f}, {push_dir[1]:.3f}, {push_dir[2]:.3f}]")
-            print(f"Hand +X:     [{hand_x[0]:.3f}, {hand_x[1]:.3f}, {hand_x[2]:.3f}]")
-            print(f"Hand +Y:     [{hand_y[0]:.3f}, {hand_y[1]:.3f}, {hand_y[2]:.3f}]")
-            print(f"Hand +Z:     [{hand_z_axis[0]:.3f}, {hand_z_axis[1]:.3f}, {hand_z_axis[2]:.3f}]")
+            print(f"Hand -Y:     [{hand_neg_x[0]:.3f}, {hand_neg_x[1]:.3f}, {hand_neg_x[2]:.3f}]")
+            print(f"Hand Z:      [{hand_z_axis[0]:.3f}, {hand_z_axis[1]:.3f}, {hand_z_axis[2]:.3f}]")
             print(f"-" * 60)
-            # Show dot products of all axes with push_dir
-            dot_x = np.dot(hand_x[:2] / (np.linalg.norm(hand_x[:2]) + 1e-8), push_dir[:2])
-            dot_y = np.dot(hand_y[:2] / (np.linalg.norm(hand_y[:2]) + 1e-8), push_dir[:2])
-            dot_neg_x = np.dot(-hand_x[:2] / (np.linalg.norm(hand_x[:2]) + 1e-8), push_dir[:2])
-            dot_neg_y = np.dot(-hand_y[:2] / (np.linalg.norm(hand_y[:2]) + 1e-8), push_dir[:2])
-            print(f"Dot products with push_dir:")
-            print(f"  +X: {dot_x:.3f}  |  -X: {dot_neg_x:.3f}")
-            print(f"  +Y: {dot_y:.3f}  |  -Y: {dot_neg_y:.3f}")
-            print(f"-" * 60)
+            print(f"R_dist:   {2.0 * reward_dist:.3f}")
+            print(f"R_height: {1.5 * reward_height:.3f}")
+            print(f"R_z_down: {1.0 * proximity_gate * reward_z_down:.3f} (gated)")
+            print(f"R_align:  {1.5 * proximity_gate * reward_push_align:.3f} (gated)")
+            print(f"R_ctrl:   {reward_ctrl:.3f}")
             print(f"TOTAL:    {total_reward:.3f}")
 
         info = {"is_success": False}
@@ -193,6 +217,12 @@ class PandaPushEnv(gym.Env):
         # Settle physics
         for _ in range(10):
             mujoco.mj_step(self.model, self.data)
+
+        # Call mj_forward AGAIN AFTER SETTLING TO UPDATE SITE POSITIONS
+        # mujoco.mj_forward(self.model, self.data)
+
+        # IMPORTANT: Compute reach target from INITIAL bottle position
+        self.reach_target, self.initial_bottle_pos, self.push_dir = self._get_target_pos()
 
         self.episode_length = 0
 
