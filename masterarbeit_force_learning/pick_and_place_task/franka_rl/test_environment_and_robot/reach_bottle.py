@@ -140,67 +140,58 @@ class PandaPushEnv(gym.Env):
         z_alignment = np.dot(hand_z_axis, desired_down)
         reward_z_down = (z_alignment + 1.0) / 2.0
 
+
         # === 4. ORIENTATION B: Try POSITIVE X axis instead ===
-        hand_neg_x = -hand_mat[:, 0]  # Try +X instead of -X
+        # hand_neg_x = -hand_mat[:, 0]  # Try +X instead of -X
 
         # Project to horizontal
-        hand_neg_x_horiz = hand_neg_x.copy()
-        hand_neg_x_horiz[2] = 0
-        norm = np.linalg.norm(hand_neg_x_horiz)
-        if norm > 1e-6:
-            hand_neg_x_horiz /= norm
-        else:
-            hand_neg_x_horiz = np.array([0.0, -1.0, 0.0])
+        # hand_neg_x_horiz = hand_neg_x.copy()
+        # hand_neg_x_horiz[2] = 0
+        # norm = np.linalg.norm(hand_neg_x_horiz)
+        # if norm > 1e-6:
+        #     hand_neg_x_horiz /= norm
+        # else:
+        #     hand_neg_x_horiz = np.array([1.0, 0.0, 0.0])
 
-        push_alignment = np.dot(hand_neg_x_horiz, push_dir)
-        reward_push_align = (push_alignment + 1.0) / 2.0
+        # push_alignment = np.dot(hand_neg_x_horiz, push_dir)
+        # reward_push_align = (push_alignment + 1.0) / 2.0
 
         # === 5. CONTROL PENALTY ===
         reward_ctrl = -0.01 * np.square(self.data.ctrl[:7]).sum()
 
         # === GATING ===
-        proximity_gate = np.exp(-5.0 * distance_xy)
+        # proximity_gate = np.exp(-5.0 * distance_xy)
 
         # === TOTAL REWARD ===
         total_reward = (
                 2.0 * reward_dist +
-                1.5 * reward_height +
-                1.0 * proximity_gate * reward_z_down +
-                1.5 * proximity_gate * reward_push_align +  # Increased weight
+                2.0 * reward_height + # 1.5
+                2.0 * reward_z_down + # 1.0 # * proximity_gate removed
+                # 1.0 * proximity_gate * reward_push_align +  # Increased weight # 1.5
                 reward_ctrl
         )
 
         # === DEBUG PRINTS ===
         if self.episode_length % 50 == 0:
-            # Also print all three axes to see which one we should use
-            hand_y = hand_mat[:, 1]
             current_bottle_pos = self.data.xpos[self.bottle_body_id]
             print(f"\n{'=' * 60}")
             print(f"Step: {self.episode_length}")
             print(f"{'=' * 60}")
             print(f"Hand pos:           [{hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f}]")
-            print(f"Initial bottle pos: [{self.initial_bottle_pos[0]:.3f}, {self.initial_bottle_pos[1]:.3f}, {self.initial_bottle_pos[2]:.3f}]")
-            print(f"Current bottle pos: [{current_bottle_pos[0]:.3f}, {current_bottle_pos[1]:.3f}, {current_bottle_pos[2]:.3f}]")
             print(f"Reach target:       [{reach_target[0]:.3f}, {reach_target[1]:.3f}, {reach_target[2]:.3f}]")
             print(f"-" * 60)
             print(f"Distance XY:      {distance_xy:.4f}")
             print(f"Height error:     {height_error:.4f}")
             print(f"Z-down alignment: {z_alignment:.4f}")
-            print(f"Push alignment:   {push_alignment:.4f} (hand -Y • push_dir)")
-            print(f"-" * 60)
-            print(f"Push dir:    [{push_dir[0]:.3f}, {push_dir[1]:.3f}, {push_dir[2]:.3f}]")
-            print(f"Hand -Y:     [{hand_neg_x[0]:.3f}, {hand_neg_x[1]:.3f}, {hand_neg_x[2]:.3f}]")
-            print(f"Hand Z:      [{hand_z_axis[0]:.3f}, {hand_z_axis[1]:.3f}, {hand_z_axis[2]:.3f}]")
             print(f"-" * 60)
             print(f"R_dist:   {2.0 * reward_dist:.3f}")
-            print(f"R_height: {1.5 * reward_height:.3f}")
-            print(f"R_z_down: {1.0 * proximity_gate * reward_z_down:.3f} (gated)")
-            print(f"R_align:  {1.5 * proximity_gate * reward_push_align:.3f} (gated)")
+            print(f"R_height: {2.0 * reward_height:.3f}")
+            print(f"R_z_down: {2.0 * reward_z_down:.3f}")
             print(f"R_ctrl:   {reward_ctrl:.3f}")
             print(f"TOTAL:    {total_reward:.3f}")
 
         info = {"is_success": False}
-        if distance_xy < 0.05 and height_error < 0.03 and z_alignment > 0.9 and push_alignment > 0.85:
+        if distance_xy < 0.05 and height_error < 0.05 and z_alignment > 0.95:
             total_reward += 10.0
             info["is_success"] = True
             print(f"\n*** SUCCESS! ***")
