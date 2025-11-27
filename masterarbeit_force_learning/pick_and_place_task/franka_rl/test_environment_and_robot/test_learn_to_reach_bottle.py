@@ -8,7 +8,7 @@ env = PandaPushEnv(render_mode="human")
 print("Environment created.")
 
 # --- 2. Load Model ---
-model_path = "reach_bottle_with_hand_new_1_100k.zip"
+model_path = "reach_bottle_27_11_2025_1_4.zip"
 try:
     model = PPO.load(model_path, env=env)
     print(f"Model loaded from {model_path}")
@@ -20,6 +20,7 @@ except Exception as e:
 # --- 3. Run Test Episodes ---
 print("Running test episodes...")
 num_episodes = 30
+visual_deLay = 0.05
 
 for episode in range(num_episodes):
     obs, info = env.reset()
@@ -42,6 +43,7 @@ for episode in range(num_episodes):
 
         # Optional: Add a small delay so you can watch it
         # time.sleep(0.01)
+        time.sleep(visual_deLay)
 
     print(f"Episode {episode + 1}/{num_episodes} - Reward: {episode_reward:.2f}")
 

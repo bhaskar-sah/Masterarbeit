@@ -30,7 +30,7 @@ model.learn(total_timesteps=100000)
 
 # --- 4. Save Model ---
 # The model will be saved as "panda_reach_model.zip"
-model_save_path = ("reach_bottle_with_hand_new_1_100k")
+model_save_path = ("reach_bottle_27_11_2025_1_4")
 model.save(model_save_path)
 
 env.close()
