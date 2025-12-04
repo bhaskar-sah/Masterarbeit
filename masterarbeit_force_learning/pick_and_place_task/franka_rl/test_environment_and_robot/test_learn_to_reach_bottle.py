@@ -1,6 +1,7 @@
 import time
 from stable_baselines3 import PPO
-from reach_bottle import PandaPushEnv  # Import your custom environment
+# from reach_bottle import PandaPushEnv  # Import your custom environment
+from reach_bottle_and_push_to_goal import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # We MUST use render_mode="human" to see the simulation
@@ -8,7 +9,8 @@ env = PandaPushEnv(render_mode="human")
 print("Environment created.")
 
 # --- 2. Load Model ---
-model_path = "reach_bottle_27_11_2025_1_4.zip"
+# model_path = "reach_bottle_03_12_2025.zip"
+model_path = "reach_bottle_and_push_to_goal_13.zip"
 try:
     model = PPO.load(model_path, env=env)
     print(f"Model loaded from {model_path}")
@@ -20,7 +22,7 @@ except Exception as e:
 # --- 3. Run Test Episodes ---
 print("Running test episodes...")
 num_episodes = 30
-visual_deLay = 0.05
+visual_deLay = 0.03
 
 for episode in range(num_episodes):
     obs, info = env.reset()

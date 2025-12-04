@@ -1,7 +1,8 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
-from reach_bottle import PandaPushEnv  # Import your custom environment
+# from reach_bottle import PandaPushEnv  # Import your custom environment
+from reach_bottle_and_push_to_goal import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # Create the environment
@@ -30,7 +31,8 @@ model.learn(total_timesteps=100000)
 
 # --- 4. Save Model ---
 # The model will be saved as "panda_reach_model.zip"
-model_save_path = ("reach_bottle_27_11_2025_1_4")
+# model_save_path = ("reach_bottle_03_12_2025")
+model_save_path = ("reach_bottle_and_push_to_goal_13")
 model.save(model_save_path)
 
 env.close()
