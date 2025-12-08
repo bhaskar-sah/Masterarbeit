@@ -96,8 +96,10 @@ class PandaPushEnv(gym.Env):
         else:
             direction = vec / dist
 
+        # height of table 0.8m (80cm) + bottle 0.16m (16cm) = 0.96m (96cm)
+        # height of hand 0.107m (10.7cm) + Finger 0.0584 (5.84cm) = 0.1654cm (16.54m)
         reach_target = bottle_pos - (direction * 0.18)
-        reach_target[2] = 0.95  # table (0.80) + offset
+        reach_target[2] = 0.9654  # table (0.8m) + (hand+gripper) (0.1654m) = 0.9654m
 
         return reach_target, bottle_pos.copy(), direction
 
@@ -144,18 +146,22 @@ class PandaPushEnv(gym.Env):
         reward_ctrl = -0.001 * np.square(self.data.ctrl[:7]).sum()
 
         # === 5. BONUS FOR REACHING TARGET ===
-        reached_position = distance_3d < 0.08
-        reached_with_orientation = distance_3d < 0.05 and quat_error < 0.1
+        reached_position = distance_3d < 0.02 # make it extremely precise to 2 cm rather than 0.08m
+        # reached_with_orientation = distance_3d < 0.05 and quat_error < 0.1
+        reached_with_orientation = distance_3d < 0.02 and quat_error < 0.05
 
         bonus = 0.0
         if reached_position:
-            bonus += 0.5  # Small bonus for getting close
+            bonus += 2.0  # Small bonus for getting close
+        else:
+            bonus += 0.0 # nothing for "close enough"
+
         if reached_with_orientation:
             bonus += 2.0  # Big bonus for reaching with correct orientation
 
         # === TOTAL REWARD ===
         total_reward = (
-                5.0 * reward_distance +  # Primary: get closer (negative when far)
+                9.0 * reward_distance +  # Primary: get closer (negative when far) -> now increase pull strength from 5.0 to 8.0
                 2.0 * reward_orientation +  # Secondary: orientation (gated by proximity)
                 reward_ctrl +
                 bonus
@@ -190,6 +196,7 @@ class PandaPushEnv(gym.Env):
             print(f"\n*** SUCCESS! ***")
 
         return total_reward, info
+
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)

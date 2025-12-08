@@ -136,8 +136,8 @@ class PandaPushEnv(gym.Env):
         reward_ctrl = -0.001 * np.square(self.data.ctrl[:7]).sum()
 
         # === 5. BONUS FOR REACHING TARGET ===
-        reached_position = distance_3d < 0.08
-        reached_with_orientation = distance_3d < 0.05 and quat_error < 0.1
+        reached_position = distance_3d < 0.02 # tightened thresholds from 8cm to 2cm to get any bonus
+        reached_with_orientation = distance_3d < 0.02 and quat_error < 0.1 # also here from 5cm to 2cm
 
         bonus = 0.0
         if reached_position:
