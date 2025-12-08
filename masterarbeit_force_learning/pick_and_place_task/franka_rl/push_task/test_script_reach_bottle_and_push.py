@@ -1,10 +1,7 @@
+import os
 import time
 from stable_baselines3 import PPO
-from reach_bottle import PandaPushEnv  # Import your custom environment
-# from reach_bottle_and_push_to_goal import PandaPushEnv  # Import your custom environment
-# from reach_bottle_and_push_to_goal_v01 import PandaPushEnv  # Import your custom environment
-# from reach_bottle_and_push_to_goal_v01_reach_bottle_only import PandaPushEnv  # Import your custom environment
-# from reach_bottle_and_push_to_goal_v01_reach_bottle_and_transition_only import PandaPushEnv  # Import your custom environment
+from reach_bottle_and_push import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # We MUST use render_mode="human" to see the simulation
@@ -12,14 +9,26 @@ env = PandaPushEnv(render_mode="human")
 print("Environment created.")
 
 # --- 2. Load Model ---
-model_path = "reach_bottle_03_12_2025.zip"
-# model_path = "reach_bottle_and_push_to_goal_v01_reach_bottle_only_3.zip"
+# --- 2. Load Model ---
+# Get the directory where this test script is located
+current_dir = os.path.dirname(os.path.realpath(__file__))
+
+# distinct filename matches the one you used in training
+model_name = "reach_bottle_and_push_01.zip"
+
+# Construct the full path
+model_path = os.path.join(current_dir, "saved_models", model_name)
+
+if not os.path.exists(model_path):
+    print(f"Error: Model file not found at {model_path}")
+    print("Check the filename and ensure the 'saved_models' folder exists.")
+    exit()
+
 try:
     model = PPO.load(model_path, env=env)
-    print(f"Model loaded from {model_path}")
+    print(f"Model loaded successfully from {model_path}")
 except Exception as e:
     print(f"Error loading model: {e}")
-    print("Did you run train.py first to create the model file?")
     exit()
 
 # --- 3. Run Test Episodes ---

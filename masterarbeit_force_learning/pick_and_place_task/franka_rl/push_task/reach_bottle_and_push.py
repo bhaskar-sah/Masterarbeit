@@ -1,0 +1,260 @@
+import gymnasium as gym
+from gymnasium import spaces
+import mujoco
+import mujoco.viewer
+import numpy as np
+import os
+
+
+class PandaPushEnv(gym.Env):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+
+    def __init__(self, render_mode=None):
+        super().__init__()
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        xml_path = os.path.join(current_dir, "..", "test_environment_and_robot", "panda_robot.xml")
+
+        # Optional: Convert to an absolute path to avoid potential issues with relative paths later
+        xml_path = os.path.abspath(xml_path)
+
+        if not os.path.exists(xml_path):
+            raise FileNotFoundError(f"Could not find XML file at: {xml_path}")
+
+        print(f"Loading XML from: {xml_path}")
+
+        self.model = mujoco.MjModel.from_xml_path(xml_path)
+        self.data = mujoco.MjData(self.model)
+
+        self.home_key_id = self.model.key("home").id
+
+        # Body IDs
+        self.bottle_body_id = self.model.body("bottle").id
+        self.hand_body_id = self.model.body("hand").id
+        self.target_site_id = self.model.site("goal").id
+
+        # Action space: 7 robot joints
+        self.actuator_ranges = self.model.actuator_ctrlrange[:7, :]
+        self.act_low = self.actuator_ranges[:, 0]
+        self.act_high = self.actuator_ranges[:, 1]
+
+        self.current_ctrl = np.zeros(7)
+
+        self.action_space = spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(7,),
+            dtype=np.float32
+        )
+
+        # Observation: robot joints + gripper position + target position
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(24,),  # 7 qpos + 7 qvel + 3 target + 4 hand Quat (w, x, y, z)
+            dtype=np.float32
+        )
+
+        self.render_mode = render_mode
+        self.viewer = None
+        self.episode_length = 0
+
+        # Store initial bottle position and computed targets (set in reset)
+        self.initial_bottle_pos = None
+        self.reach_target = None
+        self.push_dir = None
+
+        # Store home hand quaternion for orientation matching
+        self.home_hand_quat = None
+
+        # Store initial distance for progress tracking
+        self.initial_distance = None
+
+    def _get_obs(self):
+        """Simple observation: robot state + target position"""
+        hand_pos = self.data.xpos[self.hand_body_id]
+        relative_vec = self.reach_target - hand_pos
+        hand_quat = self.data.xquat[self.hand_body_id]
+
+        return np.concatenate([
+            self.data.qpos[7:14],  # Robot joints (7)
+            self.data.qvel[6:13],  # Robot velocities (7)
+            hand_pos,
+            relative_vec,  # Target position (3)
+            hand_quat  # Hand orientation (4)
+        ]).astype(np.float32)
+
+    def _get_target_pos(self):
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+        target_goal_pos = np.array([0.4, -0.2, 0.80])
+
+        vec = target_goal_pos - bottle_pos
+        vec[2] = 0  # ignore z
+        dist = np.linalg.norm(vec)
+
+        if dist < 1e-6:
+            direction = np.array([1.0, 0.0, 0.0])
+        else:
+            direction = vec / dist
+
+        reach_target = bottle_pos - (direction * 0.18)
+        reach_target[2] = 0.95  # table (0.80) + offset
+
+        return reach_target, bottle_pos.copy(), direction
+
+    def _get_reward(self):
+        hand_pos = self.data.xpos[self.hand_body_id]
+        hand_quat = self.data.xquat[self.hand_body_id]
+
+        # Use pre-computed values (from initial bottle position)
+        reach_target = self.reach_target
+
+        # === 1. DISTANCE TO TARGET (3D) ===
+        distance_3d = np.linalg.norm(hand_pos - reach_target)
+        distance_xy = np.linalg.norm(hand_pos[:2] - reach_target[:2])
+        height_error = np.abs(hand_pos[2] - reach_target[2])
+
+        # === 2. PROGRESS REWARD (most important!) ===
+        # Reward for getting CLOSER to target - this is the main driver
+        # Negative distance means robot gets penalized for being far away
+        ##########################################################
+        # reward_distance = -distance_3d  # Simple negative distance
+
+        # === 2. PROGRESS REWARD (most important!) ===
+        # Exponential/Gaussian penalty for distance to target
+        # Highly penalizes far distances, but flattens near zero,
+        # forcing agent to learn precision.
+        # Use np.exp(-(c * distance_3d**2)) - 1.0 (or just np.exp(-c * distance_3d))
+        # This will be NEGATIVE and go to 0 as distance goes to 0.
+        EXP_COEFF = 50.0  # Adjust this coefficient: higher C means steeper penalty closer to target
+        reward_distance = np.exp(-EXP_COEFF * distance_3d)
+        ##########################################################
+
+        # === 3. ORIENTATION: Match home quaternion ===
+        home_quat = self.home_hand_quat
+        quat_diff1 = np.linalg.norm(hand_quat - home_quat)
+        quat_diff2 = np.linalg.norm(hand_quat + home_quat)
+        quat_error = min(quat_diff1, quat_diff2)
+
+        # Orientation bonus - but ONLY matters when close to target
+        # This prevents robot from prioritizing orientation over movement
+        proximity_gate = np.exp(-3.0 * distance_3d)  # Only kicks in when close
+        reward_orientation = proximity_gate * (1.0 - np.tanh(5.0 * quat_error))
+
+        # === 4. CONTROL PENALTY (small) ===
+        reward_ctrl = -0.001 * np.square(self.data.ctrl[:7]).sum()
+
+        # === 5. BONUS FOR REACHING TARGET ===
+        reached_position = distance_3d < 0.08
+        reached_with_orientation = distance_3d < 0.05 and quat_error < 0.1
+
+        bonus = 0.0
+        if reached_position:
+            bonus += 0.5  # Small bonus for getting close
+        if reached_with_orientation:
+            bonus += 2.0  # Big bonus for reaching with correct orientation
+
+        # === TOTAL REWARD ===
+        total_reward = (
+                5.0 * reward_distance +  # Primary: get closer (negative when far)
+                2.0 * reward_orientation +  # Secondary: orientation (gated by proximity)
+                reward_ctrl +
+                bonus
+        )
+
+        # === DEBUG PRINTS ===
+        if self.episode_length % 50 == 0:
+            print(f"\n{'=' * 60}")
+            print(f"Step: {self.episode_length}")
+            print(f"{'=' * 60}")
+            print(f"Hand pos:           [{hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f}]")
+            print(f"Reach target:       [{reach_target[0]:.3f}, {reach_target[1]:.3f}, {reach_target[2]:.3f}]")
+            print(f"-" * 60)
+            print(f"Distance 3D:      {distance_3d:.4f}")
+            print(f"Distance XY:      {distance_xy:.4f}")
+            print(f"Height error:     {height_error:.4f}")
+            print(f"Quat error:       {quat_error:.4f}")
+            print(f"Proximity gate:   {proximity_gate:.4f}")
+            print(f"-" * 60)
+            print(f"R_distance:    {5.0 * reward_distance:.3f}")
+            print(f"R_orientation: {2.0 * reward_orientation:.3f}")
+            print(f"R_ctrl:        {reward_ctrl:.4f}")
+            print(f"Bonus:         {bonus:.3f}")
+            print(f"TOTAL:         {total_reward:.3f}")
+            print(f"Hand quat:     [{hand_quat[0]:.3f}, {hand_quat[1]:.3f}, {hand_quat[2]:.3f}, {hand_quat[3]:.3f}]")
+            print(f"Home quat:     [{home_quat[0]:.3f}, {home_quat[1]:.3f}, {home_quat[2]:.3f}, {home_quat[3]:.3f}]")
+
+        info = {"is_success": False}
+        if reached_with_orientation:
+            total_reward += 10.0
+            info["is_success"] = True
+            print(f"\n*** SUCCESS! ***")
+
+        return total_reward, info
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        mujoco.mj_resetDataKeyframe(self.model, self.data, self.home_key_id)
+        mujoco.mj_forward(self.model, self.data)
+
+        self.current_ctrl = self.data.qpos[7:14].copy()
+
+        # Settle physics
+        for _ in range(10):
+            mujoco.mj_step(self.model, self.data)
+
+        # Update kinematics after settling
+        mujoco.mj_forward(self.model, self.data)
+
+        # CAPTURE HOME HAND QUATERNION
+        self.home_hand_quat = self.data.xquat[self.hand_body_id].copy()
+
+        # Compute reach target from initial bottle position
+        self.reach_target, self.initial_bottle_pos, self.push_dir = self._get_target_pos()
+
+        # Store initial distance for progress tracking
+        hand_pos = self.data.xpos[self.hand_body_id]
+        self.initial_distance = np.linalg.norm(hand_pos - self.reach_target)
+
+        self.episode_length = 0
+
+        obs = self._get_obs()
+        return obs, {}
+
+    def step(self, action):
+        # Small step size for smooth motion
+        step_size = 0.005
+        self.current_ctrl = self.current_ctrl + (action * step_size)
+        # Clip to hardware limits
+        self.current_ctrl = np.clip(self.current_ctrl, self.act_low, self.act_high)
+
+        # Send to MuJoCo
+        self.data.ctrl[:7] = self.current_ctrl
+
+        # Step physics multiple times for stability
+        for _ in range(20):
+            mujoco.mj_step(self.model, self.data)
+
+        obs = self._get_obs()
+        reward, info = self._get_reward()
+
+        self.episode_length += 1
+
+        # Termination conditions
+        terminated = False
+        if info["is_success"]:
+            terminated = True
+
+        truncated = bool(self.episode_length >= 500)
+
+        return obs, reward, terminated, truncated, info
+
+    def render(self):
+        if self.render_mode == "human":
+            if self.viewer is None:
+                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self.viewer.sync()
+
+    def close(self):
+        if self.viewer:
+            self.viewer.close()
+            self.viewer = None
