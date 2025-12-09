@@ -14,7 +14,7 @@ print("Environment created.")
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 # distinct filename matches the one you used in training
-model_name = "reach_bottle_and_push_13.zip"
+model_name = "reach_bottle_and_push_16.zip"
 
 # Construct the full path
 model_path = os.path.join(current_dir, "saved_models", model_name)

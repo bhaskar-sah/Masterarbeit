@@ -143,7 +143,7 @@ class PandaPushEnv(gym.Env):
         reward_orientation = proximity_gate * (1.0 - np.tanh(5.0 * quat_error))
 
         # === 4. CONTROL PENALTY (small) ===
-        reward_ctrl = -0.001 * np.square(self.data.ctrl[:7]).sum()
+        reward_ctrl = -0.0001 * np.square(self.data.ctrl[:7]).sum()
 
         # === 5. BONUS FOR REACHING TARGET ===
         reached_position = distance_3d < 0.02  # make it extremely precise to 2 cm rather than 0.08m
