@@ -1,7 +1,8 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
-from reach_bottle_and_push import PandaPushEnv  # Import your custom environment
+# from reach_bottle_and_push import PandaPushEnv  # Import your custom environment
+from reach_bottle_and_push_extend import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # Create the environment
@@ -25,7 +26,7 @@ model = PPO("MlpPolicy", env, verbose=1)
 # --- 3. Train Model ---
 print("Starting training...")
 # step size: 100,000
-model.learn(total_timesteps=100000)
+model.learn(total_timesteps=200000)
 
 # --- 4. Save Model ---
 print("Saving Trained Model...")
@@ -33,7 +34,7 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 save_folder = os.path.join(current_script_dir, "saved_models")
 os.makedirs(save_folder, exist_ok=True)
 
-model_name = "reach_bottle_and_push_16"
+model_name = "reach_bottle_and_push_extend_13"
 model_save_path = os.path.join(save_folder, model_name)
 
 model.save(model_save_path)
