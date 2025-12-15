@@ -1,8 +1,8 @@
 import os
 import time
 from stable_baselines3 import PPO
-# from reach_bottle_and_push import PandaPushEnv  # Import your custom environment
-from reach_bottle_and_push_extend import PandaPushEnv  # Import your custom environment
+# from reach_bottle_new import PandaPushEnv  # Import your custom environment
+from reach_bottle_and_align import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # We MUST use render_mode="human" to see the simulation

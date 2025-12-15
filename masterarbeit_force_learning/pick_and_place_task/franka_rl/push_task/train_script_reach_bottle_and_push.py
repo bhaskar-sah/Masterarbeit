@@ -1,8 +1,8 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
-# from reach_bottle_and_push import PandaPushEnv  # Import your custom environment
-from reach_bottle_and_push_extend import PandaPushEnv  # Import your custom environment
+# from reach_bottle_new import PandaPushEnv  # Import your custom environment
+from reach_bottle_and_align import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # Create the environment
