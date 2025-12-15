@@ -319,7 +319,7 @@
   </actuator>
 
   <keyframe>
-    <key name="home" qpos="0.4 0.2 0.805 1 0 0 0 0 0 0 -1.57079 0 1.57079 -0.7853 0 0" ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 0"/> <!-- for the gripper to be open the last vaues to [0.04 0.04] andn to [255], furthermore remove oben the range="0 0"-->
+    <key name="home" qpos="0.4000 0.2000 0.8050 1.0000 0.0000 0.0000 0.0000 0.4112 0.8521 0.1875 -1.5036 -0.1960 2.3372 -0.1130 0.0 0.0" ctrl="0.4112 0.8521 0.1875 -1.5036 -0.1960 2.3372 -0.1130 0"/> <!-- for the gripper to be open the last vaues to [0.04 0.04] andn to [255], furthermore remove oben the range="0 0"-->
   </keyframe>
 
   <contact>
