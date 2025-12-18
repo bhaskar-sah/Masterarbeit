@@ -107,3 +107,20 @@ print("=" * 60)
 print(f'qpos="{bottle_str} {robot_str} {fingers_str}"')
 print(f'ctrl="{robot_str} 0"')
 print("=" * 60)
+
+# --- VERIFICATION STEP ---
+final_pos = data.site_xpos[site_id]
+final_error = np.linalg.norm(final_pos - target_pos)
+
+print("\n" + "="*30)
+print("FINAL VERIFICATION")
+print("="*30)
+print(f"Target Position: {target_pos}")
+print(f"Actual Position: {final_pos}")
+print(f"Distance Error:  {final_error:.6f} m")  # Should be close to 0.000000
+
+if final_error < 0.005: # Less than 5mm error
+    print("SUCCESS: Robot is at the target!")
+else:
+    print("WARNING: Robot is slightly off target.")
+print("="*30)
