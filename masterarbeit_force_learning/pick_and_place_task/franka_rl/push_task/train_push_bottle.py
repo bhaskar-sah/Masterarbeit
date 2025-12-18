@@ -1,7 +1,8 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
-from push_bottle import PandaPushEnv  # Import your custom environment
+# from push_bottle import PandaPushEnv  # Import your custom environment
+from push_bottle_and_align import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # Create the environment
@@ -40,7 +41,7 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 save_folder = os.path.join(current_script_dir, "saved_models")
 os.makedirs(save_folder, exist_ok=True)
 
-model_name = "push_bottle_2"
+model_name = "push_bottle_7"
 model_save_path = os.path.join(save_folder, model_name)
 
 model.save(model_save_path)
