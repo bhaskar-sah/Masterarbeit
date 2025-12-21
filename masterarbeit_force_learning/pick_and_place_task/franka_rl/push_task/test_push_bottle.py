@@ -3,7 +3,8 @@ import time
 from stable_baselines3 import PPO
 # from push_bottle import PandaPushEnv  # Import your custom environment
 # from push_bottle_and_align import PandaPushEnv  # Import your custom environment
-from push_bottle_and_align_and_contact import PandaPushEnv  # Import your custom environment
+# from push_bottle_and_align_and_contact import PandaPushEnv  # Import your custom environment
+from push_bottle_and_align_and_contact_and_push import PandaPushEnv  # Import your custom environment
 
 # --- 1. Setup Environment ---
 # We MUST use render_mode="human" to see the simulation
@@ -15,7 +16,7 @@ print("Environment created.")
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 # distinct filename matches the one you used in training
-model_name = "push_bottle_and_align_and_contact_1.zip"
+model_name = "push_bottle_and_align_and_contact_and_push_13.zip"
 
 # Construct the full path
 model_path = os.path.join(current_dir, "saved_models", model_name)
@@ -35,7 +36,7 @@ except Exception as e:
 # --- 3. Run Test Episodes ---
 print("Running test episodes...")
 num_episodes = 30
-visual_deLay = 0.09 # 0.03
+visual_deLay = 0.1 # 0.03
 
 for episode in range(num_episodes):
     obs, info = env.reset()
