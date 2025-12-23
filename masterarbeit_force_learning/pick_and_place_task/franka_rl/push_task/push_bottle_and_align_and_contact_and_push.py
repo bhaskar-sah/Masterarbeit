@@ -263,7 +263,7 @@ class PandaPushEnv(gym.Env):
             print(f"  Reward: {total_reward:.2f}")
 
         # ============ TERMINATION ============
-        if dist_bottle_goal < 0.05:
+        if dist_bottle_goal < 0.07:
             total_reward += 50.0
             info["is_success"] = True
             print(f"\n *** GOAL REACHED at step {self.episode_length}! ***")
@@ -307,7 +307,7 @@ class PandaPushEnv(gym.Env):
 
     def step(self, action):
         # Small step size for smooth motion
-        step_size = 0.05
+        step_size = 0.03
         # Clip to hardware limits
         self.current_ctrl = np.clip(
             self.current_ctrl + (action * step_size),
@@ -333,7 +333,7 @@ class PandaPushEnv(gym.Env):
                      info.get("contact_lost", False) or \
                      info.get("bottle_flying", False) or \
                     info.get("bad_orientation", False)
-        truncated = self.episode_length >= 300  # Shorter episodes for pushing
+        truncated = self.episode_length >= 400  # Shorter episodes for pushing
 
         return obs, reward, terminated, truncated, info
 
