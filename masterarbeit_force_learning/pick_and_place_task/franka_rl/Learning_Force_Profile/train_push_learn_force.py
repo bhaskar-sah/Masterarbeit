@@ -1,0 +1,104 @@
+import os
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.callbacks import CheckpointCallback
+from push_learn_force import PandaPushTrajectoryEnv
+
+ALGORITHM = "PPO"
+TRAJECTORY_TYPE = "straight"
+TOTAL_TIMESTEPS = 200000
+MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_01"
+
+
+# ==================== SETUP ====================
+print("="*60)
+print("TRAINING: Panda Push Trajectory Following")
+print("="*60)
+print(f"Algorithm: {ALGORITHM}")
+print(f"Trajectory: {TRAJECTORY_TYPE}")
+print(f"Timesteps: {TOTAL_TIMESTEPS}")
+print("="*60)
+
+env = PandaPushTrajectoryEnv(
+    render_mode=None,
+    trajectory_type=TRAJECTORY_TYPE
+)
+print("Environment Created!!!!!")
+
+# Check Environment
+try:
+    check_env(env)
+    print("Environment check passed!")
+except Exception as e:
+    print(f"Environment check failed: {e}")
+    env.close()
+    exit()
+
+model = PPO(
+    "MlpPolicy",
+    env,
+    verbose=1,
+    learning_rate=3e-4,
+    n_steps=2048,
+    batch_size=64,
+    n_epochs=10,
+    gamma=0.99,
+    gae_lambda=0.95,
+    clip_range=0.2,
+    ent_coef=0.01,
+    tensorboard_log="./ppo_push_tensorboard/"
+)
+
+# --- CALLBACKS ---
+current_script_dir = os.path.dirname(os.path.realpath(__file__))
+save_folder = os.path.join(current_script_dir, "saved_models")
+os.makedirs(save_folder, exist_ok=True)
+
+checkpoint_callback = CheckpointCallback(
+    save_freq=50000,
+    save_path=save_folder,
+    name_prefix=MODEL_NAME
+)
+
+# --- 3. Train Model ---
+print("Starting training......")
+model.learn(
+    total_timesteps=TOTAL_TIMESTEPS,
+    callback=checkpoint_callback,
+    progress_bar=True
+)
+
+"""
+# This is what happens inside model.learn(total_timesteps=200000)
+
+steps_taken = 0
+obs = env.reset() # Start the first game
+
+while steps_taken < 200000:
+    
+    # 1. The Brain decides (Policy)
+    action, _ = model.predict(obs)
+    
+    # 2. YOUR FUNCTION runs here!
+    # This calls the 'step' method you wrote in PandaPushEnv
+    new_obs, reward, terminated, truncated, info = env.step(action)
+    
+    # 3. Model learns from the result
+    model.store_transition(obs, action, reward, new_obs)
+    
+    obs = new_obs
+    steps_taken += 1
+    
+    # 4. If the bottle fell or time ran out (terminated/truncated)
+    if terminated or truncated:
+        obs = env.reset() # Restart the environment
+"""
+
+# --- 4. Save Model ---
+model_save_path = os.path.join(save_folder, MODEL_NAME)
+model.save(model_save_path)
+env.close()
+
+print("\n" + "="*60)
+print(f"Training complete!")
+print(f"Model saved to: {model_save_path}.zip")
