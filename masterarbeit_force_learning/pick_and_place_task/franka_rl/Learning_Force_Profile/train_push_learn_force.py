@@ -2,12 +2,21 @@ import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback
-from push_learn_force import PandaPushTrajectoryEnv
+# from push_learn_force import PandaPushTrajectoryEnv
+# from push_learn_force_impedance import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_1 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_2 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_3 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_4 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_5 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_6 import PandaPushTrajectoryEnv
+from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
 
 ALGORITHM = "PPO"
 TRAJECTORY_TYPE = "straight"
 TOTAL_TIMESTEPS = 200000
-MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_01"
+# MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_02"
+MODEL_NAME = f"push_trajectory_impedance_7_{TRAJECTORY_TYPE}_01"
 
 
 # ==================== SETUP ====================
@@ -64,7 +73,7 @@ checkpoint_callback = CheckpointCallback(
 print("Starting training......")
 model.learn(
     total_timesteps=TOTAL_TIMESTEPS,
-    callback=checkpoint_callback,
+    # callback=checkpoint_callback,
     progress_bar=True
 )
 

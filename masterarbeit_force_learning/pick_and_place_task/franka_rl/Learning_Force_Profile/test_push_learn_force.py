@@ -3,10 +3,24 @@ import time
 from stable_baselines3 import PPO
 
 # Import the env
-from push_learn_force import PandaPushTrajectoryEnv
+# from push_learn_force import PandaPushTrajectoryEnv
+# from push_learn_force_impedance import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_1 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_2 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_3 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_4 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_5 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_6 import PandaPushTrajectoryEnv
+from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
 
 # ==================== CONFIGURATION ====================
-MODEL_NAME = "push_trajectory_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_1_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_1_straight_02.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_2_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_3_straight_02.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_4_straight_01.zip"  # Change to your model name
+MODEL_NAME = "push_trajectory_impedance_7_straight_01.zip"  # Change to your model name
 TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.02  # Seconds between frames (0 for max speed)
