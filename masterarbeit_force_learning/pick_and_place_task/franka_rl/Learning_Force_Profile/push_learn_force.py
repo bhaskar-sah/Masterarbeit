@@ -89,7 +89,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.render_mode = render_mode
         self.viewer = None
         self.episode_length = 0
-        self.max_episode_length = 500
+        self.max_episode_length = 1000 # 500
         self.prev_progress = 0.0
         # self.goal_pos = None
         self.contact_made = False
@@ -98,6 +98,48 @@ class PandaPushTrajectoryEnv(gym.Env):
         print(f"  Trajectory type: {trajectory_type}")
         print(f"  Observation dim: {obs_dim}")
         print(f"  Action dim: 7 (joint velocities)")
+
+    def _apply_z_correction(self):
+        """
+        Calculates joint velocities to force the hand back to target_z.
+        """
+        target_z = 0.93
+        kp = 5.0  # Correction strength
+
+        # 1. Measure current height error
+        hand_pos = self.data.xpos[self.hand_body_id]
+        error = target_z - hand_pos[2]
+
+        # If we are close enough, don't intervene (let the agent learn)
+        if abs(error) < 0.002:
+            return np.zeros(7)
+
+        # 2. Get the Jacobian (Relationship between Joints and Hand Position)
+        # We need a 3x7 matrix (for X, Y, Z position)
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))  # Rotational jacobian (unused here)
+
+        mujoco.mj_jac(self.model, self.data, jacp, jacr, hand_pos, self.hand_body_id)
+
+        # We only care about the Panda arm joints (columns 0 to 6)
+        # Reshape to (3, 7) assuming the first 7 DOFs are the arm
+        J_pos = jacp[:, :7]
+
+        # 3. Focus only on Z-axis (Row 2)
+        J_z = J_pos[2, :]  # Shape (7,)
+
+        # 4. Calculate desired Z velocity to fix error (P-Control)
+        v_z_desired = kp * error
+
+        # 5. Solve: J_z * qvel = v_z_desired
+        # We use Pseudo-Inverse to find the best joint velocities
+        # that lift the hand without messing up X/Y too much.
+        # damp=1e-4 prevents instability
+        J_z_pinv = J_z.T / (np.dot(J_z, J_z.T) + 1e-6)
+
+        qvel_correction = J_z_pinv * v_z_desired
+
+        return qvel_correction
 
     # ==================================================================
     #                      TRAJECTORY GENERATION
@@ -319,7 +361,12 @@ class PandaPushTrajectoryEnv(gym.Env):
         # 1. PROGRESS REWARD - Move along trajectory (the main driver)
         progress_delta = progress - self.prev_progress
         # r_progress = 50.0 * max(progress_delta, 0)  # Big reward for progress
-        r_progress = 100.0 * progress_delta
+        # If touching: Get full points (100.0).
+        # If NOT touching: Get 10% points (10.0) or 0.
+        # This forces the robot to "chase" the bottle if it pushes too hard.
+        contact_multiplier = 1.0 if is_touching else 0.0
+
+        r_progress = 100.0 * progress_delta * contact_multiplier
 
         # 2. DEVIATION PENALTY - Stay on trajectory
         # r_deviation = -20.0 * deviation_mag  # Penalty for being off-track
@@ -335,20 +382,29 @@ class PandaPushTrajectoryEnv(gym.Env):
         # else:
         #     r_on_path = -2.0
 
-        # 3. REACHING & HEIGHT REWARD (Replaces simple contact reward)
+        # 3. REACHING & HEIGHT REWARD (CORRECTED FOR XML)
         dist_xy = np.linalg.norm(hand_pos[:2] - bottle_xy)
-        dist_z = abs(hand_pos[2] - bottle_pos[2])  # Vertical distance
 
-        # Penalize being too high up (Important fix for "moving up")
+        # --- FIXED Z-AXIS LOGIC ---
+        # Table surface is at Z=0.8.
+        # We set a "Floor" at 0.81 (1cm safety margin above table).
+        if hand_pos[2] < 0.81:
+            r_table_collision = -10.0  # big penalty for hitting table
+        else:
+            r_table_collision = 0.0
+
+        # Target Height:
+        # Bottle body pos is at the base (0.805). Center is +0.08 up.
+        # We aim for Z = 0.88 (approx center of bottle).
+        target_z = 0.93
+        dist_z = abs(hand_pos[2] - target_z)
+
         r_height = -5.0 * dist_z
 
         if is_touching:
-            # Small bonus for contact to encourage staying close
-            r_approach = 1.0
+            r_approach = 2.0
         else:
-            # Reward for getting close (XY) + Penalty for being high (Z)
-            # Shaping: Max value is 0 (at contact), negative otherwise
-            r_approach = -1.0 * dist_xy + r_height
+            r_approach = -1.0 * dist_xy + r_height + r_table_collision
 
         # # 4. CONTACT REWARD - Encourage maintaining contact while pushing
         # if is_touching:
@@ -394,6 +450,10 @@ class PandaPushTrajectoryEnv(gym.Env):
         else:
             r_stability = 0.0
 
+        # 6. velocity penalty
+        qvel = self.data.qvel[6:13] # getting the robot joint velocities
+        r_velocity = -0.1 * np.linalg.norm(qvel)
+
         # ===== TOTAL REWARD =====
         total_reward = (
                 r_progress +
@@ -402,7 +462,8 @@ class PandaPushTrajectoryEnv(gym.Env):
                 # r_contact +
                 r_approach +
                 r_force_direction +
-                r_stability
+                r_stability +
+                r_velocity
         )
 
         # Small living penalty to encourage speed (optional)
@@ -509,9 +570,19 @@ class PandaPushTrajectoryEnv(gym.Env):
         learning how to move to push effectively.
         """
         # Apply action to joints
-        step_size = 0.03
+        step_size = 0.002
+        # 1. Get the Agent's desired movement
+        agent_action = action * step_size
+
+        # 2. Get the "Vertical Rail" correction
+        z_correction = self._apply_z_correction() * step_size
+
+        # 3. Combine them
+        # The agent controls pushing; the Code controls height.
+        total_ctrl_delta = agent_action + z_correction
+
         self.current_ctrl = np.clip(
-            self.current_ctrl + action * step_size,
+            self.current_ctrl + total_ctrl_delta,
             self.act_low,
             self.act_high
         )

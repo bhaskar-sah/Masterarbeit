@@ -11,7 +11,18 @@ from stable_baselines3 import PPO
 # from push_learn_force_impedance_4 import PandaPushTrajectoryEnv
 # from push_learn_force_impedance_5 import PandaPushTrajectoryEnv
 # from push_learn_force_impedance_6 import PandaPushTrajectoryEnv
-from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_8 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_9 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_9_orientation_added import PandaPushTrajectoryEnv
+from push_learn_force_impedance_9_orientation_added_tilt_correction import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_9_increase_impedance import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_10 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_11 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_12 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_13 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_13_rotation_correction import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_13_rotation_correction_new import PandaPushTrajectoryEnv
 
 # ==================== CONFIGURATION ====================
 # MODEL_NAME = "push_trajectory_impedance_straight_01.zip"  # Change to your model name
@@ -20,7 +31,16 @@ from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
 # MODEL_NAME = "push_trajectory_impedance_2_straight_01.zip"  # Change to your model name
 # MODEL_NAME = "push_trajectory_impedance_3_straight_02.zip"  # Change to your model name
 # MODEL_NAME = "push_trajectory_impedance_4_straight_01.zip"  # Change to your model name
-MODEL_NAME = "push_trajectory_impedance_7_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_8_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_9_straight_01.zip"  # Change to your model name
+MODEL_NAME = "push_trajectory_impedance_9_orientation_added_tilt_correction_straight_03_increased_bottle_size.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_9_increase_impedance_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_10_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_10_correction_both_sides_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_12_straight_04.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_13_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_13_rotation_correction_straight_01.zip"  # Change to your model name
+# MODEL_NAME = "push_trajectory_impedance_13_rotation_correction_new_straight_01.zip"  # Change to your model name
 TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.02  # Seconds between frames (0 for max speed)

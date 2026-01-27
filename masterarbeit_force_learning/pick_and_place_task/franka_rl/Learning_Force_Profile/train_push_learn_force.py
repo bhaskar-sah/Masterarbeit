@@ -10,13 +10,25 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 # from push_learn_force_impedance_4 import PandaPushTrajectoryEnv
 # from push_learn_force_impedance_5 import PandaPushTrajectoryEnv
 # from push_learn_force_impedance_6 import PandaPushTrajectoryEnv
-from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_8 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_9 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_9_increase_impedance import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_9_orientation_added import PandaPushTrajectoryEnv
+from push_learn_force_impedance_9_orientation_added_tilt_correction import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_10 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_10_correction_both_sides import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_11 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_12 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_13 import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_13_rotation_correction import PandaPushTrajectoryEnv
+# from push_learn_force_impedance_13_rotation_correction_new import PandaPushTrajectoryEnv
 
 ALGORITHM = "PPO"
 TRAJECTORY_TYPE = "straight"
 TOTAL_TIMESTEPS = 200000
 # MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_02"
-MODEL_NAME = f"push_trajectory_impedance_7_{TRAJECTORY_TYPE}_01"
+MODEL_NAME = f"push_trajectory_impedance_9_orientation_added_tilt_correction_{TRAJECTORY_TYPE}_03_increased_bottle_size"
 
 
 # ==================== SETUP ====================

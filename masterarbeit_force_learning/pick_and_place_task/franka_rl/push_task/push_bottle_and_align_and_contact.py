@@ -196,46 +196,46 @@ class PandaPushEnv(gym.Env):
             dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_pos[:2] - bottle_radius)
             reward_stay_close = -10.0 * max(0, dist_to_bottle) # penalize being far from bottle
 
-            # ============ DEBUG OUTPUT ============
-            if self.episode_length % 3 == 0:
-                print("\n" + "=" * 60)
-                print(f"Step: {self.episode_length}")
-                print("-" * 60)
+        # ============ DEBUG OUTPUT ============
+        if self.episode_length % 3 == 0:
+            print("\n" + "=" * 60)
+            print(f"Step: {self.episode_length}")
+            print("-" * 60)
 
-                print(f"Hand pos:      [{hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f}]")
-                print(f"Bottle pos:    [{bottle_pos[0]:.3f}, {bottle_pos[1]:.3f}, {bottle_pos[2]:.3f}]")
-                print(f"Sweet spot:    [{sweet_spot[0]:.3f}, {sweet_spot[1]:.3f}, {sweet_spot[2]:.3f}]")
-                print(f"Goal pos:      [{self.goal_pos[0]:.3f}, {self.goal_pos[1]:.3f}, {self.goal_pos[2]:.3f}]")
+            print(f"Hand pos:      [{hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f}]")
+            print(f"Bottle pos:    [{bottle_pos[0]:.3f}, {bottle_pos[1]:.3f}, {bottle_pos[2]:.3f}]")
+            print(f"Sweet spot:    [{sweet_spot[0]:.3f}, {sweet_spot[1]:.3f}, {sweet_spot[2]:.3f}]")
+            print(f"Goal pos:      [{self.goal_pos[0]:.3f}, {self.goal_pos[1]:.3f}, {self.goal_pos[2]:.3f}]")
 
-                print("-" * 60)
+            print("-" * 60)
 
-                print(f"Dist hand->sweet:  {dist_total:.4f} m")
-                print(f"Dist bottle->goal: {dist_bottle_goal:.4f} m")
-                print(f"Height diff:       {height_diff:.4f} m")
+            print(f"Dist hand->sweet:  {dist_total:.4f} m")
+            print(f"Dist bottle->goal: {dist_bottle_goal:.4f} m")
+            print(f"Height diff:       {height_diff:.4f} m")
 
-                print("-" * 60)
+            print("-" * 60)
 
-                print(f"X-axis align:   {alignment:.3f} (want +1.0)")
-                print(f"Z-axis[2]:      {hand_z_axis[2]:.3f} (want -1.0)")
-                print(f"Is touching:    {is_touching}")
-                print(f"Contact made:   {self.contact_made}")
+            print(f"X-axis align:   {alignment:.3f} (want +1.0)")
+            print(f"Z-axis[2]:      {hand_z_axis[2]:.3f} (want -1.0)")
+            print(f"Is touching:    {is_touching}")
+            print(f"Contact made:   {self.contact_made}")
 
-                print("-" * 60)
+            print("-" * 60)
 
-                print("REWARD BREAKDOWN:")
-                print(f"  R_approach_xy:    {5.0 * reward_approach_xy:+.4f}")
-                print(f"  R_approach_z:     {5.0 * reward_approach_z:+.4f}")
-                print(f"  R_close:          {3.0 * reward_close:+.4f}")
-                print(f"  R_orient_z:       {2.0 * orientation_z_reward:+.4f}")
-                print(f"  R_orient_x:       {2.0 * orientation_x_reward:+.4f}")
-                print(f"  R_height:         {height_penalty:+.4f}")
-                print(f"  R_contact:        {reward_contact:+.4f}")
-                print(f"  R_contact_loss:   {contact_loss_penalty:+.4f}")
-                print(f"  R_stay_close:     {reward_stay_close:+.4f}")
-                print(f"  R_ctrl:           {reward_ctrl:+.4f}")
+            print("REWARD BREAKDOWN:")
+            print(f"  R_approach_xy:    {5.0 * reward_approach_xy:+.4f}")
+            print(f"  R_approach_z:     {5.0 * reward_approach_z:+.4f}")
+            print(f"  R_close:          {3.0 * reward_close:+.4f}")
+            print(f"  R_orient_z:       {2.0 * orientation_z_reward:+.4f}")
+            print(f"  R_orient_x:       {2.0 * orientation_x_reward:+.4f}")
+            print(f"  R_height:         {height_penalty:+.4f}")
+            print(f"  R_contact:        {reward_contact:+.4f}")
+            print(f"  R_contact_loss:   {contact_loss_penalty:+.4f}")
+            print(f"  R_stay_close:     {reward_stay_close:+.4f}")
+            print(f"  R_ctrl:           {reward_ctrl:+.4f}")
 
-                print("=" * 60)
-            # ============ END DEBUG ============
+            print("=" * 60)
+        # ============ END DEBUG ============
 
         # === TOTAL REWARD ===
         total_reward = (

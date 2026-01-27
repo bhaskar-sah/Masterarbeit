@@ -1,0 +1,798 @@
+"""
+Panda Push Environment with ORIENTATION CONTROL
+
+PROBLEM: Hand is rotated, causing off-center pushing that tips the bottle.
+
+SOLUTION:
+1. Control hand orientation to face the push direction
+2. Keep gripper aligned with bottle center
+3. Use full 6-DOF Cartesian control (position + orientation)
+"""
+
+import gymnasium as gym
+from gymnasium import spaces
+import mujoco
+import mujoco.viewer
+import numpy as np
+import os
+
+
+class PandaPushTrajectoryEnv(gym.Env):
+    """
+    Environment with position AND orientation control.
+    Gripper stays aligned with push direction to prevent bottle tipping.
+    """
+
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+
+    def __init__(self, render_mode=None, trajectory_type="straight"):
+        super().__init__()
+
+        # ==================== LOAD MUJOCO MODEL ====================
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.abspath(xml_path)
+
+        if not os.path.exists(xml_path):
+            raise FileNotFoundError(f"Could not find XML file at: {xml_path}")
+
+        self.model = mujoco.MjModel.from_xml_path(xml_path)
+        self.data = mujoco.MjData(self.model)
+
+        # ==================== BODY IDs ====================
+        self.home_key_id = self.model.key("home").id
+        self.bottle_body_id = self.model.body("bottle").id
+        self.hand_body_id = self.model.body("hand").id
+        self.goal_site_id = self.model.site("goal").id
+        self.left_finger_body_id = self.model.body("left_finger").id
+        self.right_finger_body_id = self.model.body("right_finger").id
+
+        self.robot_contact_bodies = {
+            self.hand_body_id,
+            self.left_finger_body_id,
+            self.right_finger_body_id
+        }
+
+        # ==================== ROBOT CONTROL ====================
+        self.actuator_ranges = self.model.actuator_ctrlrange[:7, :]
+        self.act_low = self.actuator_ranges[:, 0]
+        self.act_high = self.actuator_ranges[:, 1]
+        self.current_qpos_target = np.zeros(7)
+
+        # ==================== PUSH PARAMETERS ====================
+        self.base_push_vel = 0.012  # 12mm/s base speed
+        self.max_push_vel = 0.020  # 20mm/s max
+        self.max_correction_vel = 0.015  # 15mm/s correction max
+
+        # Force limits
+        self.target_force = 4.0
+        self.max_force = 8.0
+
+        # Tilt thresholds
+        self.safe_tilt = 0.97
+        self.warning_tilt = 0.93
+        self.danger_tilt = 0.85
+
+        # ==================== ORIENTATION CONTROL ====================
+        # Target orientation: gripper pointing down, aligned with push direction
+        self.orientation_gain = 5.0  # Gain for orientation correction
+
+        # Store initial (good) orientation from keyframe
+        self.target_hand_quat = None  # Will be set in reset
+
+        # ==================== IMPEDANCE PARAMETERS ====================
+        self.K_min = 100.0
+        self.K_max = 800.0
+        self.current_K = np.array([300.0, 300.0, 1000.0])
+
+        # ==================== CARTESIAN CONTROL ====================
+        self.target_z = 0.93
+        self.z_gain = 10.0
+        self.damping = 0.01
+
+        # ==================== APPROACH ====================
+        self.approach_offset = 0.05
+        self.contact_threshold = 0.08
+
+        # ==================== TRAJECTORY ====================
+        self.trajectory_type = trajectory_type
+        self.trajectory = None
+        self.total_arc_length = 0.0
+        self.path_tolerance = 0.05
+        self.goal_pos = None
+
+        # ==================== ACTION SPACE ====================
+        self.action_space = spaces.Box(
+            low=np.array([-1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            dtype=np.float32
+        )
+
+        # ==================== OBSERVATION SPACE ====================
+        obs_dim = 34
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
+        )
+
+        # ==================== STATE ====================
+        self.render_mode = render_mode
+        self.viewer = None
+        self.episode_length = 0
+        self.max_episode_length = 2000
+        self.prev_progress = 0.0
+        self.contact_made = False
+        self.in_approach_phase = True
+        self.prev_correction = np.zeros(2)
+
+        self.force_profile_log = []
+        self.stiffness_profile_log = []
+
+        print(f"\n{'=' * 60}")
+        print("Environment: With ORIENTATION CONTROL")
+        print(f"{'=' * 60}")
+        print(f"Orientation gain: {self.orientation_gain}")
+        print(f"Base push velocity: {self.base_push_vel * 1000:.1f} mm/s")
+        print(f"{'=' * 60}")
+
+    # ==================================================================
+    #           ORIENTATION CONTROL
+    # ==================================================================
+
+    def _get_hand_orientation(self):
+        """Get current hand orientation as rotation matrix."""
+        hand_mat = self.data.xmat[self.hand_body_id].reshape(3, 3)
+        return hand_mat
+
+    def _get_hand_z_rotation(self):
+        """
+        Get how much the hand is rotated around Z axis.
+        Returns angle in radians.
+        """
+        hand_mat = self._get_hand_orientation()
+        # The hand's X-axis direction in world frame
+        hand_x = hand_mat[:, 0]
+        # Project onto XY plane
+        hand_x_xy = hand_x[:2]
+        hand_x_xy_norm = np.linalg.norm(hand_x_xy)
+
+        if hand_x_xy_norm < 0.01:
+            return 0.0
+
+        hand_x_xy = hand_x_xy / hand_x_xy_norm
+
+        # Reference direction (should point along X or perpendicular to push)
+        # For pushing in -Y direction, hand X should point along X axis
+        ref_dir = np.array([1.0, 0.0])
+
+        # Angle between them
+        dot = np.dot(hand_x_xy, ref_dir)
+        cross = hand_x_xy[0] * ref_dir[1] - hand_x_xy[1] * ref_dir[0]
+        angle = np.arctan2(cross, dot)
+
+        return angle
+
+    def _compute_orientation_correction(self):
+        """
+        Compute joint velocity to correct hand orientation.
+        Uses the last joint (wrist) to rotate the hand.
+        """
+        z_rotation = self._get_hand_z_rotation()
+
+        # If rotation is small, no correction needed
+        if abs(z_rotation) < 0.05:  # ~3 degrees
+            return np.zeros(7)
+
+        # Correction: rotate the wrist (joint 7) to fix orientation
+        # This is a simplified approach - proper would use full Jacobian
+        correction = np.zeros(7)
+        correction[6] = -self.orientation_gain * z_rotation  # Wrist joint
+
+        # Limit correction speed
+        max_rot_vel = 0.5  # rad/s
+        correction[6] = np.clip(correction[6], -max_rot_vel, max_rot_vel)
+
+        return correction
+
+    def _get_push_direction_aligned_velocity(self, tangent, speed):
+        """
+        Compute velocity that pushes along tangent direction.
+        The hand should push straight, not at an angle.
+        """
+        # Get current hand orientation
+        hand_mat = self._get_hand_orientation()
+
+        # Hand's forward direction (assuming Y-axis of hand frame)
+        # This depends on your gripper orientation convention!
+        hand_forward = -hand_mat[:, 1]  # Negative Y often points forward
+        hand_forward_xy = hand_forward[:2]
+        hand_forward_xy_norm = np.linalg.norm(hand_forward_xy)
+
+        if hand_forward_xy_norm > 0.01:
+            hand_forward_xy = hand_forward_xy / hand_forward_xy_norm
+        else:
+            hand_forward_xy = tangent  # Fallback
+
+        # Push in the direction the hand is actually facing
+        # This prevents sideways forces
+        v_push = hand_forward_xy * speed
+
+        return v_push
+
+    # ==================================================================
+    #           APPROACH PHASE
+    # ==================================================================
+
+    def _get_approach_target(self):
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+        bottle_xy = bottle_pos[:2]
+        tangent = self._get_path_tangent(bottle_xy)
+        approach_xy = bottle_xy - tangent * self.approach_offset
+        return np.array([approach_xy[0], approach_xy[1], self.target_z])
+
+    def _compute_approach_velocity(self):
+        hand_pos = self.data.xpos[self.hand_body_id]
+        target_pos = self._get_approach_target()
+
+        error = target_pos - hand_pos
+        distance = np.linalg.norm(error[:2])
+
+        approach_gain = 1.5
+        v_desired = approach_gain * error
+
+        v_mag = np.linalg.norm(v_desired[:2])
+        max_approach_vel = 0.05
+        if v_mag > max_approach_vel:
+            v_desired[:2] = v_desired[:2] / v_mag * max_approach_vel
+
+        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+
+        return v_desired, distance
+
+    def _check_approach_complete(self):
+        hand_pos = self.data.xpos[self.hand_body_id]
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+
+        dist_xy = np.linalg.norm(hand_pos[:2] - bottle_pos[:2])
+        height_ok = abs(hand_pos[2] - self.target_z) < 0.03
+
+        return dist_xy < self.contact_threshold and height_ok
+
+    # ==================================================================
+    #           PUSH PHASE
+    # ==================================================================
+
+    def _get_bottle_tilt(self):
+        bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
+        return bottle_mat[2, 2]
+
+    def _compute_push_velocity(self, action):
+        """
+        Compute push velocity with proper orientation handling.
+        """
+        hand_pos = self.data.xpos[self.hand_body_id]
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+        bottle_xy = bottle_pos[:2]
+
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        tangent = self._get_path_tangent(bottle_xy)
+
+        tilt = self._get_bottle_tilt()
+        contact_force = self._get_contact_force()
+        force_mag = np.linalg.norm(contact_force)
+
+        # Parse action
+        forward_action = action[0]
+        lateral_action = action[1]
+
+        self.current_K[0] = self.K_min + action[2] * (self.K_max - self.K_min)
+        self.current_K[1] = self.K_min + action[3] * (self.K_max - self.K_min)
+        K_normalized = np.mean((self.current_K[:2] - self.K_min) / (self.K_max - self.K_min))
+
+        # === SAFETY MULTIPLIERS ===
+        if tilt > self.safe_tilt:
+            tilt_multiplier = 1.0
+        elif tilt > self.warning_tilt:
+            tilt_multiplier = (tilt - self.warning_tilt) / (self.safe_tilt - self.warning_tilt)
+            tilt_multiplier = 0.3 + 0.7 * tilt_multiplier
+        elif tilt > self.danger_tilt:
+            tilt_multiplier = 0.1
+        else:
+            tilt_multiplier = 0.0
+
+        if force_mag < self.target_force:
+            force_multiplier = 1.0
+        elif force_mag < self.max_force:
+            force_multiplier = 1.0 - 0.5 * (force_mag - self.target_force) / (self.max_force - self.target_force)
+        else:
+            force_multiplier = 0.3
+
+        speed_multiplier = min(tilt_multiplier, force_multiplier)
+
+        # === BUILD VELOCITY ===
+        v_desired = np.zeros(3)
+
+        # 1. FORWARD PUSH along trajectory tangent
+        base_vel = self.base_push_vel * (1.0 + forward_action * 0.3)
+        base_vel = min(base_vel, self.max_push_vel)
+        base_vel *= speed_multiplier
+
+        # Push along tangent (trajectory direction)
+        v_forward = tangent * base_vel
+        v_desired[0] += v_forward[0]
+        v_desired[1] += v_forward[1]
+
+        # 2. DEVIATION CORRECTION
+        if deviation_mag > 0.01 and tilt > self.warning_tilt:
+            correction_dir = deviation_vec / (deviation_mag + 1e-6)
+            correction_strength = 0.3 + K_normalized * 0.3
+            correction_mag = correction_strength * min(deviation_mag, 0.05) * 2
+            correction_mag = min(correction_mag, self.max_correction_vel)
+            correction_mag *= speed_multiplier
+
+            v_correction = correction_dir * correction_mag
+            v_correction = 0.7 * self.prev_correction + 0.3 * v_correction
+            self.prev_correction = v_correction.copy()
+
+            v_desired[0] += v_correction[0]
+            v_desired[1] += v_correction[1]
+
+        # 3. STAY BEHIND BOTTLE (centered!)
+        # Position hand at bottle center, behind it
+        ideal_hand_pos = bottle_xy - tangent * 0.03
+        pos_error = ideal_hand_pos - hand_pos[:2]
+
+        v_track = pos_error * 0.8 * speed_multiplier
+        v_track = np.clip(v_track, -0.02, 0.02)
+        v_desired[0] += v_track[0]
+        v_desired[1] += v_track[1]
+
+        # 4. HEIGHT
+        z_error = self.target_z - hand_pos[2]
+        v_desired[2] = self.z_gain * z_error
+
+        # LIMITS
+        v_desired[:2] = np.clip(v_desired[:2], -0.04, 0.04)
+        v_desired[2] = np.clip(v_desired[2], -0.1, 0.1)
+
+        if self.episode_length % 100 == 0:
+            z_rot = self._get_hand_z_rotation()
+            if abs(z_rot) > 0.1:
+                print(f"  WARNING: Hand rotated {np.degrees(z_rot):.1f}° around Z!")
+
+        return v_desired
+
+    def _cartesian_to_joint_velocity(self, cart_vel):
+        """
+        Convert Cartesian velocity to joint velocity.
+        Also adds orientation correction!
+        """
+        # Position Jacobian
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))
+        mujoco.mj_jacBody(self.model, self.data, jacp, jacr, self.hand_body_id)
+        J = jacp[:, 6:13]
+
+        JJT = J @ J.T
+        J_pinv = J.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(3))
+
+        # Position control
+        q_dot_pos = J_pinv @ cart_vel
+
+        # Add orientation correction (to keep hand aligned)
+        q_dot_orient = self._compute_orientation_correction()
+
+        # Combine (position has priority, orientation is secondary)
+        q_dot = q_dot_pos + 0.3 * q_dot_orient  # Reduced influence of orientation
+
+        return q_dot
+
+    # ==================================================================
+    #                      TRAJECTORY
+    # ==================================================================
+
+    def _generate_trajectory(self, bottle_start_xy, traj_type):
+        start = bottle_start_xy.copy()
+        n_points = 50
+
+        if traj_type == "straight":
+            end = start + np.array([0.0, -0.4])
+            t = np.linspace(0, 1, n_points)
+            traj = np.outer(1 - t, start) + np.outer(t, end)
+        elif traj_type == "straight_short":
+            end = start + np.array([0.0, -0.25])
+            t = np.linspace(0, 1, n_points)
+            traj = np.outer(1 - t, start) + np.outer(t, end)
+        elif traj_type == "diagonal":
+            end = start + np.array([0.15, -0.3])
+            t = np.linspace(0, 1, n_points)
+            traj = np.outer(1 - t, start) + np.outer(t, end)
+        elif traj_type == "curved":
+            t = np.linspace(0, np.pi / 2, n_points)
+            radius = 0.2
+            x = start[0] + radius * np.sin(t)
+            y = start[1] - radius * (1 - np.cos(t))
+            traj = np.stack([x, y], axis=1)
+        elif traj_type == "s_curve":
+            t = np.linspace(0, 1, n_points)
+            x = start[0] + 0.08 * np.sin(2 * np.pi * t)
+            y = start[1] - 0.35 * t
+            traj = np.stack([x, y], axis=1)
+        else:
+            end = start + np.array([0.0, -0.3])
+            t = np.linspace(0, 1, n_points)
+            traj = np.outer(1 - t, start) + np.outer(t, end)
+
+        return traj.astype(np.float32)
+
+    def _compute_arc_length(self):
+        if self.trajectory is None or len(self.trajectory) < 2:
+            self.total_arc_length = 0.0
+            return
+        diffs = np.diff(self.trajectory, axis=0)
+        self.total_arc_length = np.sum(np.linalg.norm(diffs, axis=1))
+
+    def _get_closest_point_on_trajectory(self, pos_xy):
+        if self.trajectory is None:
+            return 0, pos_xy.copy(), 0.0
+        distances = np.linalg.norm(self.trajectory - pos_xy, axis=1)
+        idx = np.argmin(distances)
+        closest_pt = self.trajectory[idx].copy()
+        if idx == 0:
+            arc_len = 0.0
+        else:
+            arc_len = np.sum(np.linalg.norm(np.diff(self.trajectory[:idx + 1], axis=0), axis=1))
+        return idx, closest_pt, arc_len
+
+    def _get_path_deviation(self, bottle_xy):
+        _, closest_pt, _ = self._get_closest_point_on_trajectory(bottle_xy)
+        deviation_vec = closest_pt - bottle_xy
+        deviation_mag = np.linalg.norm(deviation_vec)
+        return deviation_vec.astype(np.float32), float(deviation_mag)
+
+    def _get_path_tangent(self, bottle_xy):
+        if self.trajectory is None or len(self.trajectory) < 2:
+            return np.array([0.0, -1.0], dtype=np.float32)
+        idx, _, _ = self._get_closest_point_on_trajectory(bottle_xy)
+        if idx < len(self.trajectory) - 1:
+            tangent = self.trajectory[idx + 1] - self.trajectory[idx]
+        else:
+            tangent = self.trajectory[idx] - self.trajectory[idx - 1]
+        norm = np.linalg.norm(tangent)
+        if norm > 1e-6:
+            tangent = tangent / norm
+        else:
+            tangent = np.array([0.0, -1.0])
+        return tangent.astype(np.float32)
+
+    def _get_progress(self, bottle_xy):
+        if self.total_arc_length < 1e-6:
+            return 0.0
+        _, _, arc_len = self._get_closest_point_on_trajectory(bottle_xy)
+        return float(np.clip(arc_len / self.total_arc_length, 0.0, 1.0))
+
+    # ==================================================================
+    #                      CONTACT
+    # ==================================================================
+
+    def _get_contact_force(self):
+        total_force = np.zeros(3, dtype=np.float32)
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            body1 = self.model.geom_bodyid[contact.geom1]
+            body2 = self.model.geom_bodyid[contact.geom2]
+            robot_touch = body1 in self.robot_contact_bodies or body2 in self.robot_contact_bodies
+            bottle_touch = body1 == self.bottle_body_id or body2 == self.bottle_body_id
+            if robot_touch and bottle_touch:
+                c_force = np.zeros(6)
+                mujoco.mj_contactForce(self.model, self.data, i, c_force)
+                frame = contact.frame.reshape(3, 3)
+                force_world = frame.T @ c_force[:3]
+                total_force += force_world.astype(np.float32)
+        return total_force
+
+    def _is_touching(self):
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            body1 = self.model.geom_bodyid[contact.geom1]
+            body2 = self.model.geom_bodyid[contact.geom2]
+            robot_touch = body1 in self.robot_contact_bodies or body2 in self.robot_contact_bodies
+            bottle_touch = body1 == self.bottle_body_id or body2 == self.bottle_body_id
+            if robot_touch and bottle_touch:
+                return True
+        return False
+
+    # ==================================================================
+    #                      OBSERVATION
+    # ==================================================================
+
+    def _get_obs(self):
+        qpos = self.data.qpos[7:14].astype(np.float32)
+        qvel = self.data.qvel[6:13].astype(np.float32)
+        hand_pos = self.data.xpos[self.hand_body_id].astype(np.float32)
+        bottle_pos = self.data.xpos[self.bottle_body_id].astype(np.float32)
+        bottle_xy = bottle_pos[:2]
+
+        hand_to_bottle = bottle_pos[:2] - hand_pos[:2]
+        dist_to_bottle = np.linalg.norm(hand_to_bottle)
+        if dist_to_bottle > 0.001:
+            dir_to_bottle = hand_to_bottle / dist_to_bottle
+        else:
+            dir_to_bottle = np.zeros(2)
+
+        deviation_vec, _ = self._get_path_deviation(bottle_xy)
+        tangent = self._get_path_tangent(bottle_xy)
+        progress = self._get_progress(bottle_xy)
+        contact_force = self._get_contact_force()
+        is_touching = np.array([1.0 if self._is_touching() else 0.0], dtype=np.float32)
+
+        K_normalized = (self.current_K[:2] - self.K_min) / (self.K_max - self.K_min)
+
+        obs = np.concatenate([
+            qpos,
+            qvel,
+            hand_pos,
+            bottle_pos,
+            dir_to_bottle,
+            [dist_to_bottle],
+            deviation_vec,
+            tangent,
+            [progress],
+            contact_force,
+            is_touching,
+            K_normalized,
+        ])
+
+        return obs.astype(np.float32)
+
+    # ==================================================================
+    #                      REWARD
+    # ==================================================================
+
+    def _get_reward(self):
+        info = {"is_success": False}
+
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+        bottle_xy = bottle_pos[:2]
+        hand_pos = self.data.xpos[self.hand_body_id]
+
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        tangent = self._get_path_tangent(bottle_xy)
+        progress = self._get_progress(bottle_xy)
+
+        is_touching = self._is_touching()
+        contact_force = self._get_contact_force()
+        force_mag = np.linalg.norm(contact_force)
+        tilt = self._get_bottle_tilt()
+        z_rot = self._get_hand_z_rotation()
+
+        dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_xy)
+
+        if is_touching:
+            self.contact_made = True
+            self.in_approach_phase = False
+
+        if self.in_approach_phase:
+            r_approach = -2.0 * dist_to_bottle
+            height_error = abs(hand_pos[2] - self.target_z)
+            r_height = -5.0 * height_error
+            r_contact_bonus = 10.0 if is_touching else 0.0
+
+            total_reward = r_approach + r_height + r_contact_bonus
+
+            if self.episode_length % 50 == 0:
+                print(f"Step {self.episode_length} [APPROACH]: "
+                      f"dist={dist_to_bottle:.3f}m, Z={hand_pos[2]:.3f}")
+        else:
+            # Progress
+            progress_delta = progress - self.prev_progress
+            r_progress = 50.0 * max(progress_delta, 0)
+
+            # Deviation
+            if deviation_mag < 0.02:
+                r_deviation = 2.0
+            elif deviation_mag < self.path_tolerance:
+                r_deviation = 0.5
+            else:
+                r_deviation = -5.0 * deviation_mag
+
+            # Contact and force
+            if is_touching:
+                r_contact = 0.5
+                if 2.0 < force_mag < 6.0:
+                    r_force = 1.0
+                elif force_mag < 2.0:
+                    r_force = 0.0
+                elif force_mag < 10.0:
+                    r_force = -0.5
+                else:
+                    r_force = -2.0
+            else:
+                r_contact = -1.0 * dist_to_bottle
+                r_force = 0.0
+
+            # Stability
+            if tilt > 0.98:
+                r_stability = 2.0
+            elif tilt > 0.95:
+                r_stability = 1.0
+            elif tilt > 0.90:
+                r_stability = -1.0
+            elif tilt > 0.80:
+                r_stability = -5.0
+            else:
+                r_stability = -20.0
+
+            # Orientation penalty (NEW!)
+            # Penalize if hand is rotated too much
+            if abs(z_rot) < 0.1:  # < 6 degrees
+                r_orientation = 0.5
+            elif abs(z_rot) < 0.3:  # < 17 degrees
+                r_orientation = 0.0
+            else:
+                r_orientation = -2.0 * abs(z_rot)
+
+            total_reward = (
+                    r_progress +
+                    r_deviation +
+                    r_contact +
+                    r_force +
+                    r_stability +
+                    r_orientation
+            )
+
+            if self.episode_length % 100 == 0:
+                print(f"Step {self.episode_length} [PUSH]: "
+                      f"prog={progress:.1%}, "
+                      f"dev={deviation_mag:.3f}m, "
+                      f"F={force_mag:.1f}N, "
+                      f"tilt={tilt:.3f}, "
+                      f"rot={np.degrees(z_rot):.1f}°")
+
+        total_reward -= 0.01
+
+        # Success
+        if progress > 0.95 and deviation_mag < self.path_tolerance:
+            total_reward += 100.0
+            info["is_success"] = True
+            print(f"SUCCESS at step {self.episode_length}!")
+
+        # Failures
+        if tilt < 0.5:
+            total_reward -= 100.0
+            info["bottle_fallen"] = True
+
+        if deviation_mag > 0.25:
+            total_reward -= 30.0
+            info["off_path"] = True
+
+        self.prev_progress = progress
+
+        info["progress"] = progress
+        info["deviation"] = deviation_mag
+        info["force_magnitude"] = force_mag
+        info["bottle_tilt"] = tilt
+        info["hand_z_rotation"] = z_rot
+        info["is_touching"] = is_touching
+
+        return total_reward, info
+
+    # ==================================================================
+    #                      RESET
+    # ==================================================================
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+
+        mujoco.mj_resetDataKeyframe(self.model, self.data, self.home_key_id)
+        mujoco.mj_forward(self.model, self.data)
+
+        self.current_qpos_target = self.data.qpos[7:14].copy()
+        self.data.ctrl[:7] = self.current_qpos_target
+
+        # Store initial hand orientation (should be good from keyframe)
+        self.target_hand_quat = self.data.xquat[self.hand_body_id].copy()
+
+        for _ in range(100):
+            self.data.ctrl[:7] = self.current_qpos_target
+            mujoco.mj_step(self.model, self.data)
+
+        hand_pos = self.data.xpos[self.hand_body_id]
+        bottle_start = self.data.xpos[self.bottle_body_id].copy()
+
+        traj_type = self.trajectory_type
+        if options and "trajectory_type" in options:
+            traj_type = options["trajectory_type"]
+
+        self.trajectory = self._generate_trajectory(bottle_start[:2], traj_type)
+        self._compute_arc_length()
+
+        self.goal_pos = np.array([
+            self.trajectory[-1, 0],
+            self.trajectory[-1, 1],
+            bottle_start[2]
+        ], dtype=np.float32)
+
+        self.prev_progress = 0.0
+        self.contact_made = False
+        self.in_approach_phase = True
+        self.episode_length = 0
+        self.current_K = np.array([300.0, 300.0, 1000.0])
+        self.prev_correction = np.zeros(2)
+
+        self.force_profile_log = []
+        self.stiffness_profile_log = []
+
+        dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_start[:2])
+        z_rot = self._get_hand_z_rotation()
+
+        print(f"\n{'=' * 50}")
+        print(f"NEW EPISODE - {traj_type}")
+        print(f"Bottle: ({bottle_start[0]:.2f}, {bottle_start[1]:.2f})")
+        print(f"Hand: ({hand_pos[0]:.2f}, {hand_pos[1]:.2f}, Z={hand_pos[2]:.3f})")
+        print(f"Hand Z-rotation: {np.degrees(z_rot):.1f}°")
+        print(f"Distance: {dist_to_bottle:.3f}m | Phase: APPROACH")
+        print(f"{'=' * 50}")
+
+        return self._get_obs(), {}
+
+    # ==================================================================
+    #                      STEP
+    # ==================================================================
+
+    def step(self, action):
+        if self.in_approach_phase:
+            approach_vel, dist = self._compute_approach_velocity()
+            cart_vel = approach_vel
+
+            if self._check_approach_complete() or self._is_touching():
+                self.in_approach_phase = False
+                self.prev_correction = np.zeros(2)
+                print(f"Step {self.episode_length}: APPROACH COMPLETE → PUSH phase")
+        else:
+            cart_vel = self._compute_push_velocity(action)
+
+        q_dot = self._cartesian_to_joint_velocity(cart_vel)
+
+        dt = 0.02
+        self.current_qpos_target = np.clip(
+            self.current_qpos_target + q_dot * dt,
+            self.act_low,
+            self.act_high
+        )
+        self.data.ctrl[:7] = self.current_qpos_target
+
+        for _ in range(20):
+            mujoco.mj_step(self.model, self.data)
+
+        contact_force = self._get_contact_force()
+        self.force_profile_log.append(contact_force.copy())
+        self.stiffness_profile_log.append(self.current_K[:2].copy())
+
+        obs = self._get_obs()
+        reward, info = self._get_reward()
+
+        self.episode_length += 1
+
+        terminated = (
+                info.get("is_success", False) or
+                info.get("bottle_fallen", False) or
+                info.get("off_path", False)
+        )
+        truncated = self.episode_length >= self.max_episode_length
+
+        return obs, reward, terminated, truncated, info
+
+    # ==================================================================
+    #                      RENDER & UTILITY
+    # ==================================================================
+
+    def render(self):
+        if self.render_mode == "human":
+            if self.viewer is None:
+                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self.viewer.sync()
+
+    def close(self):
+        if self.viewer:
+            self.viewer.close()
+            self.viewer = None
