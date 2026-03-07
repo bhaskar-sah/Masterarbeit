@@ -28,11 +28,12 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
 
 ALGORITHM = "PPO"
-TRAJECTORY_TYPE = "straight"
+# TRAJECTORY_TYPE = "straight"
 # TRAJECTORY_TYPE = "curved"
-TOTAL_TIMESTEPS = 100000
+TRAJECTORY_TYPE = "s_curve"
+TOTAL_TIMESTEPS = 1000000
 # MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_02"
-MODEL_NAME = f"push_with_finger_learn_force_impedance_14_v01_straight_{TRAJECTORY_TYPE}_11"
+MODEL_NAME = f"push_with_finger_learn_force_impedance_14_v01_straight_{TRAJECTORY_TYPE}_21"
 # MODEL_NAME = f"push_learn_force_impedance_9_orientation_added_{TRAJECTORY_TYPE}_01"
 
 

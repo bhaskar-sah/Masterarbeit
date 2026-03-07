@@ -49,12 +49,17 @@ from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTraj
 # MODEL_NAME = "push_curriculum_learning_03_final.zip"  # Change to your model name
 # MODEL_NAME = "push_trajectory_impedance_9_orientation_added_straight_03.zip"  # Change to your model name
 # MODEL_NAME = "push_learn_force_impedance_9_orientation_added_straight_01.zip"  # Change to your model name
-MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_11.zip"  # Change to your model name
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_18.zip"  # Change to your model name
+#####################################################################################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_18.zip"  # Change to your model name
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_19.zip"  # Change to your model name
+MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_20.zip"  # Change to your model name here 0.08
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_21.zip"  # make the amplitude 0.04 for this model
 
 
-TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
+# TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization
-# TRAJECTORY_TYPE = "s_curve"  # Should match training or test generalization
+TRAJECTORY_TYPE = "s_curve"  # Should match training or test generalization
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.02  # Seconds between frames (0 for max speed)
 

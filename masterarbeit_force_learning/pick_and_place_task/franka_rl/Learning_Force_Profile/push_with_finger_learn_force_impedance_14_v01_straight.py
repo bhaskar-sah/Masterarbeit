@@ -483,6 +483,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             t = np.linspace(0, 1, n_points)
             wiggle_strength = np.sin(np.pi * t)  # Peaks at middle, zero at ends
             x = start[0] + 0.08 * np.sin(2 * np.pi * t) * wiggle_strength
+            # x = start[0] + 0.04 * np.sin(2 * np.pi * t) * wiggle_strength
             y = start[1] + t * (goal[1] - start[1])
             return np.stack([x, y], axis=1).astype(np.float32)
 
