@@ -53,9 +53,21 @@ from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTraj
 #####################################################################################################################
 # MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_18.zip"  # Change to your model name
 # MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_19.zip"  # Change to your model name
-MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_20.zip"  # Change to your model name here 0.08
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_20.zip"  # Change to your model name here 0.08
 # MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_21.zip"  # make the amplitude 0.04 for this model
-
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_22.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_23.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_24.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+############################################################################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_25.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_26.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+#############################################################################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_27.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_straight_200.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_200.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_201.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_201.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_202.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
 
 # TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization

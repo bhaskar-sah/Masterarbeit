@@ -107,6 +107,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.total_arc_length = 0.0
         self.path_tolerance = 0.05
         self.goal_position = np.array([0.4, -0.2])
+        # self.goal_position = np.array([0.4, -0.4])
 
         # Phase
         self.in_approach = True
@@ -232,7 +233,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         push_dir, _, _ = self._get_push_direction(bottle_xy)
 
         if force_mag > 0.5:  # Only compute if significant force
-            P_normalized = contact_force[:2] / force_mag
+            P_normalized = -contact_force[:2] / force_mag
             dot_product = np.clip(np.dot(P_normalized, push_dir), -1.0, 1.0)
             angle_error = np.arccos(dot_product)
         else:
@@ -313,16 +314,19 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # ==================== TILT SAFETY ====================
         if self.is_settling:
+            self.settle_counter += 1
+
             if self._check_stable():
-                self.settle_counter += 1
-                if self.settle_counter >= self.settle_required:
-                    self.is_settling = False
-                    self.settle_counter = 0
-            else:
+                self.is_settling = False
                 self.settle_counter = 0
-            v_desired = np.zeros(3)
-            v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-            return v_desired
+            elif self.settle_counter >= 200:
+                self.is_settling = False
+                self.settle_counter = 0
+
+            if self.is_settling:
+                v_desired = np.zeros(3)
+                v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+                return v_desired
 
         if tilt < self.tilt_stop:
             self.is_settling = True
@@ -413,7 +417,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         """Check if bottle is stable (upright and not moving)"""
         tilt = self._get_bottle_tilt()
         angvel = np.linalg.norm(self.data.qvel[3:6])
-        return tilt > 0.99 and angvel < 0.1
+        return tilt > 0.97 and angvel < 0.1
 
     def _cartesian_to_joint_velocity(self, cart_vel):
         """Convert Cartesian velocity to joint velocities using Jacobian."""
@@ -482,8 +486,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         elif traj_type == "s_curve":
             t = np.linspace(0, 1, n_points)
             wiggle_strength = np.sin(np.pi * t)  # Peaks at middle, zero at ends
-            x = start[0] + 0.08 * np.sin(2 * np.pi * t) * wiggle_strength
-            # x = start[0] + 0.04 * np.sin(2 * np.pi * t) * wiggle_strength
+            # x = start[0] + 0.08 * np.sin(2 * np.pi * t) * wiggle_strength
+            x = start[0] + 0.04 * np.sin(2 * np.pi * t) * wiggle_strength
             y = start[1] + t * (goal[1] - start[1])
             return np.stack([x, y], axis=1).astype(np.float32)
 

@@ -31,9 +31,9 @@ ALGORITHM = "PPO"
 # TRAJECTORY_TYPE = "straight"
 # TRAJECTORY_TYPE = "curved"
 TRAJECTORY_TYPE = "s_curve"
-TOTAL_TIMESTEPS = 1000000
+TOTAL_TIMESTEPS = 1_000_000
 # MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_02"
-MODEL_NAME = f"push_with_finger_learn_force_impedance_14_v01_straight_{TRAJECTORY_TYPE}_21"
+MODEL_NAME = f"push_with_finger_learn_force_impedance_14_v01_straight_{TRAJECTORY_TYPE}_202"
 # MODEL_NAME = f"push_learn_force_impedance_9_orientation_added_{TRAJECTORY_TYPE}_01"
 
 
