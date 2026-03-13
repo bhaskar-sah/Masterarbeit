@@ -319,7 +319,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             if self._check_stable():
                 self.is_settling = False
                 self.settle_counter = 0
-            elif self.settle_counter >= 200:
+            elif self.settle_counter >= 200: # was 200
                 self.is_settling = False
                 self.settle_counter = 0
 
