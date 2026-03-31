@@ -30,7 +30,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # ==================== LOAD MUJOCO MODEL ====================
         current_dir = os.path.dirname(os.path.realpath(__file__))
-        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.join(current_dir, "../robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
 
         if not os.path.exists(xml_path):

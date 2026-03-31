@@ -1,10 +1,3 @@
-"""
-Panda Push Environment - Direction Vector Concept
-    Where K (stiffness) is what the RL agent learns!
-    - High K = Strong correction (stiff spring pulls bottle back)
-    - Low K = Weak correction (soft spring, bottle drifts more)
-"""
-
 import gymnasium as gym
 from gymnasium import spaces
 import mujoco
@@ -28,7 +21,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Load model
         current_dir = os.path.dirname(os.path.realpath(__file__))
-        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.join(current_dir, "../robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
 
         if not os.path.exists(xml_path):
@@ -58,45 +51,30 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.current_qpos_target = np.zeros(7)
 
         # ==================== PUSH PARAMETERS ====================
-        self.base_forward_speed = 0.008  # Reduced for gentler push (prevents tipping)
+        self.base_forward_speed = 0.012  # Base forward speed along trajectory
         self.behind_distance = 0.04  # Distance behind bottle
-
-        # ==================== WRIST ROTATION (for faster correction) ====================
-        # Joint 7 (wrist) rotates independently to help hand get behind bottle faster
-        # This is ADDITIONAL to the existing arm control - makes correction quicker
-        # tuning this parameter
-        self.wrist_rotation_gain = 5.0  # How fast wrist responds to deviation
-        self.max_wrist_rotation = 0.4  # Max rotation in radians (~23 degrees)
-        self.wrist_offset = 0.0  # Current wrist rotation offset
-        self.base_wrist_pos = 0.0  # Base wrist position (saved at reset)
 
         # ==================== STIFFNESS (What RL learns!) ====================
         # K determines how strongly the correction vector pulls bottle back
-        self.K_min = 100.0  # Minimum stiffness (increased from 50)
+        self.K_min = 50.0  # Minimum stiffness
         self.K_max = 500.0  # Maximum stiffness
-        self.current_K = np.array([300.0, 300.0])  # [Kx, Ky]
+        self.current_K = np.array([200.0, 200.0])  # [Kx, Ky]
 
-        # Correction gains - TWO COMPONENTS:
-        # 1. BASE correction: Always applies, ensures minimum correction
-        self.base_correction_gain = 0.5 # 0.25  # Reduced to prevent tipping!
-
-        # 2. K-dependent correction: Additional correction from learned K
-        self.k_correction_gain = 0.35  # Scales with K
-
-        # Total correction = (base_gain + K/K_max * k_gain) * deviation
-        # Even with K=K_min, correction is significant!
+        # Correction gain: converts K to actual velocity
+        # correction_vel = K * deviation * gain
+        self.correction_gain = 0.5  # Tunable
 
         # ==================== TILT SAFETY ====================
         self.tilt_ok = 0.99
         self.tilt_slow = 0.98
-        self.tilt_stop = 0.95
+        self.tilt_stop = 0.96
 
         self.is_settling = False
         self.settle_counter = 0
         self.settle_required = 25
 
         # Cartesian control
-        self.target_z = 0.93 # 0.915
+        self.target_z = 0.93
         self.z_gain = 10.0
         self.damping = 0.01
 
@@ -104,7 +82,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.trajectory_type = trajectory_type
         self.trajectory = None
         self.total_arc_length = 0.0
-        self.path_tolerance = 0.10 # 0.05
+        self.path_tolerance = 0.05
 
         # Phase
         self.in_approach = True
@@ -136,13 +114,11 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.correction_log = []
 
         print(f"\n{'=' * 60}")
-        print("DIRECTION VECTOR CONCEPT + WRIST ROTATION")
+        print("DIRECTION VECTOR CONCEPT")
         print(f"{'=' * 60}")
         print("Push = Forward_vector + K * Correction_vector")
         print(f"K range: [{self.K_min}, {self.K_max}] N/m")
-        print(f"Base correction gain: {self.base_correction_gain}")
-        print(f"K correction gain: {self.k_correction_gain}")
-        print(f"Wrist rotation: max {np.degrees(self.max_wrist_rotation):.1f}°")
+        print(f"Correction gain: {self.correction_gain}")
         print(f"{'=' * 60}")
 
     # ==================================================================
@@ -277,36 +253,15 @@ class PandaPushTrajectoryEnv(gym.Env):
         forward_speed = self.base_forward_speed * (1.0 + forward_mod * 0.3) * speed_mult
         v_forward = forward_vec * forward_speed
 
-        # 2. CORRECTION COMPONENT: Towards trajectory
-        # TWO PARTS: Base correction (always) + K-dependent correction (learned)
+        # 2. CORRECTION COMPONENT: Towards trajectory (proportional to K and deviation)
+        # This is the KEY equation: v_correction = K * deviation * gain
         if correction_mag > 0.001:
             correction_dir = correction_vec / correction_mag
-
-            # Base correction: ALWAYS applies (ensures minimum correction)
-            base_correction = self.base_correction_gain * correction_mag
-
-            # K-dependent correction: Additional correction from learned stiffness
-            k_correction = (K_avg / self.K_max) * self.k_correction_gain * correction_mag
-
-            # Total correction speed
-            correction_speed = (base_correction + k_correction) * speed_mult
-
-            # IMPORTANT: Reduce correction when bottle is tilting!
-            # Sideways pushing causes tipping - be gentle when tilted
-            if tilt < 0.96:
-                # Reduce correction proportionally to tilt
-                tilt_factor = max((tilt - 0.90) / (0.96 - 0.90), 0.0)  # 0.1 to 1.0
-                correction_speed *= tilt_factor
-
-            correction_speed = min(correction_speed, 0.020)  # Limit max
-
+            # Correction velocity = stiffness * deviation * gain
+            # Higher K → stronger pull towards trajectory
+            correction_speed = (K_avg / self.K_max) * correction_mag * self.correction_gain * speed_mult
+            correction_speed = min(correction_speed, 0.02)  # Limit max correction speed
             v_correction = correction_dir * correction_speed
-
-            # Debug output
-            if self.episode_length % 100 == 0 and correction_mag > 0.01:
-                tilt_factor = max((tilt - 0.95) / (0.99 - 0.95), 0.1) if tilt < 0.99 else 1.0
-                print(f"    Correction: base={base_correction * 1000:.1f} + K={k_correction * 1000:.1f} "
-                      f"x tilt_factor={tilt_factor:.2f} = {correction_speed * 1000:.1f} mm/s")
         else:
             v_correction = np.zeros(2)
 
@@ -346,6 +301,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         return tilt > 0.99 and angvel < 0.1
 
     def _cartesian_to_joint_velocity(self, cart_vel):
+        # add 3 orientations
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacBody(self.model, self.data, jacp, jacr, self.hand_body_id)
@@ -355,39 +311,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         J_pinv = J.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(3))
 
         return J_pinv @ cart_vel
-
-    def _compute_wrist_rotation(self, bottle_xy):
-        """
-        Compute wrist rotation to help hand get behind bottle faster.
-
-        The wrist rotates based on deviation direction:
-        - Bottle RIGHT of trajectory → Wrist rotates LEFT (negative)
-        - Bottle LEFT of trajectory → Wrist rotates RIGHT (positive)
-
-        This helps the hand "glide" around the bottle surface to get
-        into the correct pushing position faster than arm movement alone.
-        """
-        correction_vec, deviation_mag = self._get_correction_vector(bottle_xy)
-
-        # Only rotate when deviation is significant (> 1cm)
-        if deviation_mag < 0.01:
-            return 0.0  # No rotation needed when on track
-
-        # K factor - higher K means more rotation (matches force profile)
-        K_avg = np.mean(self.current_K)
-        K_factor = K_avg / self.K_max
-
-        # Rotation based on deviation direction
-        # correction_vec points FROM bottle TO trajectory
-        # For straight trajectory: correction_vec[0] > 0 means bottle is RIGHT
-        # We rotate opposite: bottle RIGHT → wrist LEFT (negative rotation)
-        # target_rotation = -correction_vec[0] * K_factor * self.wrist_rotation_gain
-        target_rotation = correction_vec[0] * K_factor * self.wrist_rotation_gain
-
-        # Clamp to max rotation
-        target_rotation = np.clip(target_rotation, -self.max_wrist_rotation, self.max_wrist_rotation)
-
-        return target_rotation
 
     # ==================================================================
     #                      TRAJECTORY
@@ -571,20 +494,14 @@ class PandaPushTrajectoryEnv(gym.Env):
             r_progress = 100.0 * max(progress_delta, 0)
 
             # Deviation reward - reward staying on path!
-            # if deviation_mag < 0.015:
-            #     r_deviation = 5.0  # On path - big reward!
-            # elif deviation_mag < 0.03:
-            #     r_deviation = 2.0
-            # elif deviation_mag < 0.05:
-            #     r_deviation = 0.0
-            # else:
-            #     r_deviation = -10.0 * deviation_mag
-
-            # New (Linear Function):
-            max_dev_reward = 5.0
-            dev_slope = 100.0  # Penalty per meter (= 1.0 per cm)
-            r_deviation = max_dev_reward - dev_slope * deviation_mag
-            r_deviation = max(r_deviation, -15.0)  # Clamp minimum
+            if deviation_mag < 0.015:
+                r_deviation = 5.0  # On path - big reward!
+            elif deviation_mag < 0.03:
+                r_deviation = 2.0
+            elif deviation_mag < 0.05:
+                r_deviation = 0.0
+            else:
+                r_deviation = -10.0 * deviation_mag
 
             # Stability reward
             if tilt > 0.995:
@@ -605,13 +522,9 @@ class PandaPushTrajectoryEnv(gym.Env):
             if self.episode_length % 50 == 0:
                 K_avg = np.mean(self.current_K)
                 mode = "SETTLE" if self.is_settling else "PUSH"
-                wrist_deg = np.degrees(self.wrist_offset)
-                # Show which side bottle is deviating to
-                side = "LEFT" if correction_vec[0] > 0.005 else "RIGHT" if correction_vec[0] < -0.005 else "CENTER"
                 print(f"Step {self.episode_length} [{mode}]: "
-                      f"prog={progress:.1%}, dev={deviation_mag:.3f}m ({side}), "
-                      f"K={K_avg:.0f}, F={force_mag:.1f}N, tilt={tilt:.4f}, "
-                      f"wrist={wrist_deg:.1f}°")
+                      f"prog={progress:.1%}, dev={deviation_mag:.3f}m, "
+                      f"K={K_avg:.0f}, F={force_mag:.1f}N, tilt={tilt:.4f}")
 
         total_reward -= 0.005
 
@@ -673,10 +586,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.is_settling = False
         self.settle_counter = 0
 
-        # Initialize wrist rotation
-        self.base_wrist_pos = self.current_qpos_target[6]  # Save base wrist position
-        self.wrist_offset = 0.0  # Reset wrist offset
-
         self.force_profile_log = []
         self.stiffness_profile_log = []
         self.deviation_log = []
@@ -691,46 +600,21 @@ class PandaPushTrajectoryEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-
         if self.in_approach:
             cart_vel, dist = self._compute_approach_velocity()
-            target_wrist_rotation = 0.0  # No wrist rotation during approach
             if dist < 0.06 or self._is_touching():
                 self.in_approach = False
                 print(f"Step {self.episode_length}: → PUSH phase")
         else:
             cart_vel = self._compute_push_velocity(action)
-            # Compute wrist rotation for faster correction
-            target_wrist_rotation = self._compute_wrist_rotation(bottle_xy)
 
-        # Convert Cartesian velocity to joint velocities (joints 1-6 via Jacobian)
         q_dot = self._cartesian_to_joint_velocity(cart_vel)
 
         dt = 0.02
-
-        # Update joints 1-6 from Jacobian (existing behavior)
-        self.current_qpos_target[:6] = np.clip(
-            self.current_qpos_target[:6] + q_dot[:6] * dt,
-            self.act_low[:6], self.act_high[:6]
+        self.current_qpos_target = np.clip(
+            self.current_qpos_target + q_dot * dt,
+            self.act_low, self.act_high
         )
-
-        # Update joint 7 (wrist) separately for faster correction
-        # Smoothly move wrist towards target rotation
-        wrist_error = target_wrist_rotation - self.wrist_offset
-        wrist_speed = 2.0 * wrist_error  # Proportional control
-        wrist_speed = np.clip(wrist_speed, -0.5, 0.5)  # Limit rotation speed
-
-        self.wrist_offset += wrist_speed * dt
-        self.wrist_offset = np.clip(self.wrist_offset, -self.max_wrist_rotation, self.max_wrist_rotation)
-
-        # Set wrist joint target (base + offset)
-        self.current_qpos_target[6] = np.clip(
-            self.base_wrist_pos + self.wrist_offset,
-            self.act_low[6], self.act_high[6]
-        )
-
-        # Send commands to actuators
         self.data.ctrl[:7] = self.current_qpos_target
 
         for _ in range(20):
@@ -765,15 +649,3 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.viewer.close()
             self.viewer = None
 
-    def get_learned_profile(self):
-        """Get logged data showing the learned force profile."""
-        return {
-            'forces': np.array(self.force_profile_log),
-            'stiffness': np.array(self.stiffness_profile_log),
-            'deviations': np.array(self.deviation_log),
-            'corrections': self.correction_log
-        }
-
-    def set_trajectory(self, trajectory_xy):
-        self.trajectory = trajectory_xy.astype(np.float32)
-        self._compute_arc_length()

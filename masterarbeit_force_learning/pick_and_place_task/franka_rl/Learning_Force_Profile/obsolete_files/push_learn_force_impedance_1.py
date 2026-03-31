@@ -1,22 +1,10 @@
 """
 Panda Push Environment with Cartesian Space + Impedance Control
+FIXED VERSION: Includes approach phase to reach the bottle first!
 
-"Augmenting Pose Trajectories with Learned Force Profiles"
-
-Action Space: Cartesian position/velocity + Impedance (stiffness)
-- RL learns WHERE to push (Cartesian velocity: vx, vy)
-- RL learns HOW HARD to push (Force or Stiffness: Fx, Fy OR Kx, Ky)
-
-The impedance controller implements:
-    F = K * (x_desired - x_actual) + D * (v_desired - v_actual)
-
-Where K (stiffness) is learned by the RL agent:
-- High K → Stiff, tracks position precisely
-- Low K  → Compliant, adapts to contact forces
-
-This allows the RL agent to learn the FORCE PROFILE needed to:
-1. Push the bottle along the trajectory
-2. Correct deviations by applying appropriate forces
+The robot must:
+1. APPROACH: Move towards the bottle until contact
+2. PUSH: Push the bottle along trajectory with learned force profile
 """
 
 import gymnasium as gym
@@ -26,41 +14,23 @@ import mujoco.viewer
 import numpy as np
 import os
 
-from numpy.ma.testutils import approx
-
 
 class PandaPushTrajectoryEnv(gym.Env):
     """
-    Environment with Cartesian Space + Impedance Control.
-
-    Action Space (5D):
-        - vx, vy: Desired Cartesian velocity (where to push)
-        - Kx, Ky, Kz: Stiffness in each direction (how stiff/compliant)
-
-    The RL agent learns BOTH:
-        1. The pushing direction (velocity)
-        2. The force profile (via impedance/stiffness)
-
-    This is the hybrid position/force control scheme
-    for learning force profiles in manipulation tasks.
-
-    Here first  - approach phase (move to bottle)
-                - push phase (push along trajectory with impedance control)
+    Environment with:
+    - Approach phase (move to bottle)
+    - Push phase (push along trajectory with impedance control)
     """
 
-    # This tellls the user (and the code) which visulaization methods the environment supports.
-    # "human": for interactive display - opens GUI
-    # "rgb_array": This mode runs "headless". Returns a numpy array representing the image
-    # pixels (frames) of the current state. Userful for recording videos of the agent.
-    # 30 fps: human render mode. this speed ensures that, it does not run too slow or run too fast.
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, render_mode=None, trajectory_type="straight", control_mode="impedance"):
+    def __init__(self, render_mode=None, trajectory_type="straight",
+                 control_mode="impedance"):
         super().__init__()
 
         # ==================== LOAD MUJOCO MODEL ====================
         current_dir = os.path.dirname(os.path.realpath(__file__))
-        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.join(current_dir, "../robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
 
         if not os.path.exists(xml_path):
@@ -92,23 +62,16 @@ class PandaPushTrajectoryEnv(gym.Env):
         # ==================== CONTROL MODE ====================
         self.control_mode = control_mode
 
-        # ==================== IMPEDANCE CONTROL PARAMETERS ====================
-        # Stiffness bounds (N/m)
-        self.K_min = 50.0  # Very compliant
-        self.K_max = 2000.0  # Very stiff
-
-        # Damping ratio (for stability)
+        # ==================== IMPEDANCE PARAMETERS ====================
+        self.K_min = 50.0
+        self.K_max = 2000.0
         self.damping_ratio = 0.7
-
-        # Current stiffness (will be set by RL)
-        self.current_K = np.array([500.0, 500.0, 1000.0])  # [Kx, Ky, Kz]
-
-        # Default desired force (N) - for force control mode
-        self.F_max = 20.0  # Maximum force command
+        self.current_K = np.array([500.0, 500.0, 1000.0])
+        self.F_max = 20.0
 
         # ==================== CARTESIAN CONTROL ====================
-        self.target_z = 0.93  # Fixed height
-        self.max_cart_vel = 0.05
+        self.target_z = 0.93
+        self.max_cart_vel = 0.05  # Increased for approach phase
         self.z_gain = 10.0
         self.damping = 0.01
 
@@ -132,11 +95,10 @@ class PandaPushTrajectoryEnv(gym.Env):
         )
 
         # ==================== OBSERVATION SPACE ====================
-        # Extended observation includes current stiffness
-        # [qpos(7), qvel(7), hand_pos(3), bottle_pos(3), deviation(2),
-        #  tangent(2), progress(1), contact_force(3), is_touching(1),
-        #  current_stiffness(2)]
-        obs_dim = 7 + 7 + 3 + 3 + 2 + 2 + 2 + 1 + 3 + 1 + 2  # = 33
+        # Added: distance_to_bottle, direction_to_bottle
+        # qpos(7) + qvel(7) + hand(3) + bottle(3) + dir(2) + dist(1) + dev(2) + tan(2) + prog(1) + force(3) + touch(1) + K(2)
+        # 7 + 7 + 3 + 3 + 2 + 1 + 2 + 2 + 1 + 3 + 1 + 2 = 34
+        obs_dim = 34
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -148,14 +110,13 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.max_episode_length = 1000
         self.prev_progress = 0.0
         self.contact_made = False
-
-        # For logging learned force profile
         self.in_approach_phase = True  # Start in approach phase
+
         self.force_profile_log = []
         self.stiffness_profile_log = []
 
         print(f"\n{'=' * 60}")
-        print("Environment: Cartesian + Impedance Control")
+        print("Environment: Cartesian + Impedance (WITH APPROACH PHASE)")
         print(f"{'=' * 60}")
         print(f"Action: [vx, vy, Kx, Ky]")
         print(f"Approach offset: {self.approach_offset}m")
@@ -165,6 +126,7 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
     #           APPROACH PHASE - Move to bottle
     # ==================================================================
+
     def _get_approach_target(self):
         """
         Get the position where the hand should go to start pushing.
@@ -195,7 +157,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Direction to target
         error = target_pos - hand_pos
-        distance = np.linalg.norm(error[:2]) # XY distance
+        distance = np.linalg.norm(error[:2])  # XY distance
 
         # Proportional control with velocity limit
         approach_gain = 2.0
@@ -203,138 +165,34 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Limit velocity
         v_mag = np.linalg.norm(v_desired[:2])
-        if v_mag > self.max_cart_vel * 2:
+        if v_mag > self.max_cart_vel * 2:  # Allow faster approach
             v_desired[:2] = v_desired[:2] / v_mag * self.max_cart_vel * 2
 
+        # Strong Z control
         v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
 
         return v_desired, distance
 
     def _check_approach_complete(self):
-        pass#
-
-    # ==================================================================
-    #           IMPEDANCE CONTROLLER
-    # ==================================================================
-
-    def _impedance_control(self, desired_vel_xy, stiffness_xy):
-        """
-        Impedance control in Cartesian space.
-
-        Implements: F = K * (x_d - x) + D * (v_d - v)
-
-        Where:
-            K: Stiffness (learned by RL)
-            D: Damping (computed from K for stability)
-            x_d: Desired position (from trajectory)
-            v_d: Desired velocity (from RL action)
-
-        The stiffness K determines the force-position trade-off:
-            High K → Track position, resist disturbances
-            Low K  → Compliant, adapt to contact
-        """
-        hand_pos = self.data.xpos[self.hand_body_id]
-        hand_vel = self.data.cvel[self.hand_body_id][3:6]  # Linear velocity
-
-        bottle_pos = self.data.xpos[self.bottle_body_id]
-        bottle_xy = bottle_pos[:2]
-
-        # Get trajectory information
-        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
-        tangent = self._get_path_tangent(bottle_xy)
-
-        # === Compute desired Cartesian force ===
-
-        # 1. Velocity component (pushing direction from RL)
-        F_vel = np.zeros(3)
-        F_vel[0] = stiffness_xy[0] * desired_vel_xy[0] * 0.1  # Scale velocity to force
-        F_vel[1] = stiffness_xy[1] * desired_vel_xy[1] * 0.1
-
-        # 2. Position correction component (bring bottle back to trajectory)
-        # The stiffness determines how aggressively we correct deviations
-        # This is the KEY part for learning force profiles!
-        if deviation_mag > 0.01:
-            # Direction to correct: from bottle towards trajectory
-            correction_dir = deviation_vec / (deviation_mag + 1e-6)
-
-            # Force magnitude depends on stiffness and deviation
-            # High stiffness = stronger correction force
-            F_correction = np.zeros(3)
-            F_correction[0] = stiffness_xy[0] * deviation_vec[0]
-            F_correction[1] = stiffness_xy[1] * deviation_vec[1]
-        else:
-            F_correction = np.zeros(3)
-
-        # 3. Height maintenance (always stiff in Z)
-        z_error = self.target_z - hand_pos[2]
-        F_z = self.current_K[2] * z_error
-
-        # 4. Damping (for stability)
-        D_xy = 2 * self.damping_ratio * np.sqrt(stiffness_xy)
-        F_damping = np.zeros(3)
-        F_damping[0] = -D_xy[0] * hand_vel[0]
-        F_damping[1] = -D_xy[1] * hand_vel[1]
-
-        # Total desired Cartesian force
-        F_desired = np.array([
-            F_vel[0] + F_correction[0] + F_damping[0],
-            F_vel[1] + F_correction[1] + F_damping[1],
-            F_z
-        ])
-
-        # Convert Cartesian force to joint torques using Jacobian transpose
-        # τ = J^T @ F
-        jacp = np.zeros((3, self.model.nv))
-        jacr = np.zeros((3, self.model.nv))
-        mujoco.mj_jacBody(self.model, self.data, jacp, jacr, self.hand_body_id)
-        J = jacp[:, 6:13]
-
-        tau = J.T @ F_desired
-
-        return tau, F_desired
-
-    def _cartesian_to_joint_with_impedance(self, desired_vel_xy, stiffness_xy):
-        """
-        Convert Cartesian velocity to joint velocity, with impedance behavior.
-
-        This is a simplified version that:
-        1. Uses the Jacobian for velocity conversion
-        2. Applies stiffness-weighted position correction
-        3. Maintains Z height
-        """
+        """Check if we're close enough to start pushing."""
         hand_pos = self.data.xpos[self.hand_body_id]
         bottle_pos = self.data.xpos[self.bottle_body_id]
-        bottle_xy = bottle_pos[:2]
 
-        # Get deviation from trajectory
-        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        # XY distance to bottle
+        dist_xy = np.linalg.norm(hand_pos[:2] - bottle_pos[:2])
 
-        # === Build desired Cartesian velocity ===
+        # Height check
+        height_ok = abs(hand_pos[2] - self.target_z) < 0.03
 
-        # 1. Base velocity from RL action
-        v_desired = np.zeros(3)
-        v_desired[0] = desired_vel_xy[0]
-        v_desired[1] = desired_vel_xy[1]
+        # Close enough and at right height
+        return dist_xy < self.contact_threshold and height_ok
 
-        # 2. Add correction velocity weighted by stiffness
-        # Normalize stiffness to [0, 1] range for weighting
-        K_normalized = (stiffness_xy - self.K_min) / (self.K_max - self.K_min)
+    # ==================================================================
+    #           PUSH PHASE - Impedance control
+    # ==================================================================
 
-        if deviation_mag > 0.01:
-            # Correction velocity: move hand to push bottle back to trajectory
-            correction_scale = 0.5 * K_normalized  # Higher K = stronger correction
-            v_correction = correction_scale * deviation_vec * 10  # Scale up
-            v_desired[0] += v_correction[0]
-            v_desired[1] += v_correction[1]
-
-        # 3. Z velocity for height maintenance
-        z_error = self.target_z - hand_pos[2]
-        v_desired[2] = self.z_gain * z_error
-
-        # Limit velocities
-        v_desired = np.clip(v_desired, -0.1, 0.1)
-
-        # === Convert to joint velocities ===
+    def _cartesian_to_joint_velocity(self, cart_vel):
+        """Convert 3D Cartesian velocity to joint velocity."""
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacBody(self.model, self.data, jacp, jacr, self.hand_body_id)
@@ -344,16 +202,76 @@ class PandaPushTrajectoryEnv(gym.Env):
         JJT = J @ J.T
         J_pinv = J.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(3))
 
-        q_dot = J_pinv @ v_desired
-
+        q_dot = J_pinv @ cart_vel
         return q_dot
 
+    def _compute_push_velocity(self, action):
+        """
+        Compute velocity for pushing phase.
+        FIXED: Inverted correction direction for proper steering.
+        """
+        hand_pos = self.data.xpos[self.hand_body_id]
+        bottle_pos = self.data.xpos[self.bottle_body_id]
+        bottle_xy = bottle_pos[:2]
+
+        # Get trajectory info
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        tangent = self._get_path_tangent(bottle_xy)
+
+        # Parse action
+        desired_vel_xy = action[:2] * self.max_cart_vel
+
+        # Get stiffness from action
+        self.current_K[0] = self.K_min + action[2] * (self.K_max - self.K_min)
+        self.current_K[1] = self.K_min + action[3] * (self.K_max - self.K_min)
+
+        # === Build push velocity ===
+        v_desired = np.zeros(3)
+
+        # 1. Base push direction from RL
+        v_desired[0] = desired_vel_xy[0]
+        v_desired[1] = desired_vel_xy[1]
+
+        # 2. Add correction based on deviation and stiffness
+        # [CRITICAL FIX]
+        # To push bottle towards path (along deviation_vec), hand must move
+        # OPPOSITE to deviation_vec (to hit the other side of the bottle).
+        K_normalized = (self.current_K[:2] - self.K_min) / (self.K_max - self.K_min)
+
+        if deviation_mag > 0.01:
+            # Scale correction by stiffness (learnable gain)
+            # We multiply by -1.0 to move hand to the "pushing side"
+            correction_scale = K_normalized * 2.0  # Increased gain for snappier response
+            v_correction = correction_scale * deviation_vec * 5.0
+
+            # SUBTRACT the deviation vector to move hand to the opposite side
+            v_desired[0] -= v_correction[0]
+            v_desired[1] -= v_correction[1]
+
+        # 3. Stay close to bottle (track bottle position)
+        hand_to_bottle = bottle_xy - hand_pos[:2]
+        dist_to_bottle = np.linalg.norm(hand_to_bottle)
+
+        if dist_to_bottle > 0.05:  # Relaxed threshold slightly
+            # Add velocity towards bottle to maintain contact
+            track_vel = hand_to_bottle * 2.0
+            v_desired[0] += track_vel[0]
+            v_desired[1] += track_vel[1]
+
+        # 4. Height maintenance
+        z_error = self.target_z - hand_pos[2]
+        v_desired[2] = self.z_gain * z_error
+
+        # Clip velocities
+        v_desired = np.clip(v_desired, -0.2, 0.2)  # Increased limit slightly
+
+        return v_desired
+
     # ==================================================================
-    #                      TRAJECTORY GENERATION
+    #                      TRAJECTORY
     # ==================================================================
 
     def _generate_trajectory(self, bottle_start_xy, traj_type):
-        """Generate trajectory for the bottle to follow."""
         start = bottle_start_xy.copy()
         n_points = 50
 
@@ -393,10 +311,6 @@ class PandaPushTrajectoryEnv(gym.Env):
             return
         diffs = np.diff(self.trajectory, axis=0)
         self.total_arc_length = np.sum(np.linalg.norm(diffs, axis=1))
-
-    # ==================================================================
-    #                      TRAJECTORY QUERIES
-    # ==================================================================
 
     def _get_closest_point_on_trajectory(self, pos_xy):
         if self.trajectory is None:
@@ -438,11 +352,10 @@ class PandaPushTrajectoryEnv(gym.Env):
         return float(np.clip(arc_len / self.total_arc_length, 0.0, 1.0))
 
     # ==================================================================
-    #                      CONTACT DETECTION
+    #                      CONTACT
     # ==================================================================
 
     def _get_contact_force(self):
-        """Get contact force between robot and bottle."""
         total_force = np.zeros(3, dtype=np.float32)
         for i in range(self.data.ncon):
             contact = self.data.contact[i]
@@ -459,7 +372,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         return total_force
 
     def _is_touching(self):
-        """Check if robot is in contact with bottle."""
         for i in range(self.data.ncon):
             contact = self.data.contact[i]
             body1 = self.model.geom_bodyid[contact.geom1]
@@ -475,12 +387,20 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_obs(self):
-        """Build observation (31 dims including current stiffness)."""
+        """Observation includes approach info."""
         qpos = self.data.qpos[7:14].astype(np.float32)
         qvel = self.data.qvel[6:13].astype(np.float32)
         hand_pos = self.data.xpos[self.hand_body_id].astype(np.float32)
         bottle_pos = self.data.xpos[self.bottle_body_id].astype(np.float32)
         bottle_xy = bottle_pos[:2]
+
+        # Direction and distance to bottle (for approach)
+        hand_to_bottle = bottle_pos[:2] - hand_pos[:2]
+        dist_to_bottle = np.linalg.norm(hand_to_bottle)
+        if dist_to_bottle > 0.001:
+            dir_to_bottle = hand_to_bottle / dist_to_bottle
+        else:
+            dir_to_bottle = np.zeros(2)
 
         deviation_vec, _ = self._get_path_deviation(bottle_xy)
         tangent = self._get_path_tangent(bottle_xy)
@@ -488,7 +408,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         contact_force = self._get_contact_force()
         is_touching = np.array([1.0 if self._is_touching() else 0.0], dtype=np.float32)
 
-        # Normalized current stiffness
         K_normalized = (self.current_K[:2] - self.K_min) / (self.K_max - self.K_min)
 
         obs = np.concatenate([
@@ -496,13 +415,15 @@ class PandaPushTrajectoryEnv(gym.Env):
             qvel,  # 7
             hand_pos,  # 3
             bottle_pos,  # 3
+            dir_to_bottle,  # 2 (direction to bottle)
+            [dist_to_bottle],  # 1 (distance to bottle)
             deviation_vec,  # 2
             tangent,  # 2
             [progress],  # 1
             contact_force,  # 3
             is_touching,  # 1
-            K_normalized,  # 2 (current stiffness)
-        ])
+            K_normalized,  # 2
+        ])  # Total: 34
 
         return obs.astype(np.float32)
 
@@ -511,7 +432,6 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_reward(self):
-        """Reward function for force profile learning."""
         info = {"is_success": False}
 
         bottle_pos = self.data.xpos[self.bottle_body_id]
@@ -526,73 +446,89 @@ class PandaPushTrajectoryEnv(gym.Env):
         contact_force = self._get_contact_force()
         force_mag = np.linalg.norm(contact_force)
 
+        # Distance to bottle
+        dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_xy)
+
         if is_touching:
             self.contact_made = True
+            self.in_approach_phase = False  # Switch to push phase
 
         # ===== REWARD COMPONENTS =====
 
-        # 1. Progress reward
-        progress_delta = progress - self.prev_progress
-        contact_multiplier = 1.0 if is_touching else 0.0
-        r_progress = 100.0 * progress_delta * contact_multiplier
+        if self.in_approach_phase:
+            # APPROACH PHASE: Reward getting close to bottle
+            r_approach = -2.0 * dist_to_bottle  # Closer = better
 
-        # 2. Deviation penalty
-        if deviation_mag < self.path_tolerance:
-            r_deviation = 1.0
-        else:
-            r_deviation = -15.0 * deviation_mag
+            # Height reward
+            # keep height reward and remove reward for joint controls. Let the robot control the joints by itself.
+            height_error = abs(hand_pos[2] - self.target_z)
+            r_height = -5.0 * height_error
 
-        # 3. Contact reward
-        if is_touching:
-            r_contact = 2.0
-
-            # Force alignment
-            force_xy = contact_force[:2]
-            force_norm = np.linalg.norm(force_xy)
-            if force_norm > 0.5:
-                force_dir = force_xy / force_norm
-                alignment = np.dot(force_dir, tangent)
-                r_force_align = 3.0 * max(0, alignment)
+            # Bonus for making contact
+            if is_touching:
+                r_contact_bonus = 10.0
             else:
+                r_contact_bonus = 0.0
+
+            total_reward = r_approach + r_height + r_contact_bonus
+
+            # Debug
+            if self.episode_length % 50 == 0:
+                print(f"Step {self.episode_length} [APPROACH]: "
+                      f"dist={dist_to_bottle:.3f}m, "
+                      f"Z={hand_pos[2]:.3f}, "
+                      f"touch={is_touching}")
+        else:
+            # PUSH PHASE: Original reward
+            progress_delta = progress - self.prev_progress
+            r_progress = 100.0 * max(progress_delta, 0)
+
+            if deviation_mag < self.path_tolerance:
+                r_deviation = 1.0
+            else:
+                r_deviation = -15.0 * deviation_mag
+
+            if is_touching:
+                r_contact = 2.0
+                force_xy = contact_force[:2]
+                force_norm = np.linalg.norm(force_xy)
+                if force_norm > 0.5:
+                    force_dir = force_xy / force_norm
+                    alignment = np.dot(force_dir, tangent)
+                    r_force_align = 3.0 * max(0, alignment)
+                else:
+                    r_force_align = 0.0
+            else:
+                r_contact = -1.0 * dist_to_bottle
                 r_force_align = 0.0
 
-            # Reward for appropriate force magnitude (not too much, not too little)
-            ideal_force = 5.0  # N
-            force_error = abs(force_mag - ideal_force)
-            r_force_mag = -0.5 * force_error
-        else:
-            dist_xy = np.linalg.norm(hand_pos[:2] - bottle_xy)
-            r_contact = -1.0 * dist_xy
-            r_force_align = 0.0
-            r_force_mag = 0.0
+            # Stability
+            bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
+            bottle_upright = bottle_mat[2, 2]
+            if bottle_upright < 0.9:
+                r_stability = -10.0 * (1.0 - bottle_upright)
+            else:
+                r_stability = 0.0
 
-        # 4. Stability
-        bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
-        bottle_upright = bottle_mat[2, 2]
-        if bottle_upright < 0.9:
-            r_stability = -10.0 * (1.0 - bottle_upright)
-        else:
-            r_stability = 0.0
+            total_reward = (
+                    r_progress + # reward for moving
+                    r_deviation + # reward for not maintaining the path
+                    r_contact + # reward for being in contact with the bottle
+                    r_force_align + # reward for aligining along the trajectory
+                    r_stability # bottle being upright (basically checking for fallen condition)
+                # removed joint control reward
+            )
 
-        # 5. Stiffness regularization (encourage reasonable stiffness values)
-        K_mean = np.mean(self.current_K[:2])
-        if K_mean < 100 or K_mean > 1500:
-            r_stiffness = -0.1
-        else:
-            r_stiffness = 0.0
+            # Debug
+            if self.episode_length % 100 == 0:
+                print(f"Step {self.episode_length} [PUSH]: "
+                      f"prog={progress:.1%}, "
+                      f"dev={deviation_mag:.3f}m, "
+                      f"F={force_mag:.1f}N, "
+                      f"K=[{self.current_K[0]:.0f},{self.current_K[1]:.0f}]")
 
-        # Total reward
-        total_reward = (
-                r_progress +
-                r_deviation +
-                r_contact +
-                r_force_align +
-                r_force_mag +
-                r_stability +
-                r_stiffness
-        )
-
-        total_reward -= 0.05  # Time penalty
+        # Time penalty
+        total_reward -= 0.05
 
         # Success
         if progress > 0.95 and deviation_mag < self.path_tolerance:
@@ -601,6 +537,9 @@ class PandaPushTrajectoryEnv(gym.Env):
             print(f"SUCCESS at step {self.episode_length}!")
 
         # Failures
+        bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
+        bottle_upright = bottle_mat[2, 2]
+
         if bottle_upright < 0.5:
             total_reward -= 50.0
             info["bottle_fallen"] = True
@@ -611,22 +550,14 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         self.prev_progress = progress
 
-        # Info for logging
+        # Info
         info["progress"] = progress
         info["deviation"] = deviation_mag
         info["force_magnitude"] = force_mag
         info["is_touching"] = is_touching
         info["hand_z"] = hand_pos[2]
-        info["stiffness_x"] = self.current_K[0]
-        info["stiffness_y"] = self.current_K[1]
-
-        # Debug
-        if self.episode_length % 100 == 0:
-            print(f"Step {self.episode_length}: "
-                  f"prog={progress:.1%}, "
-                  f"dev={deviation_mag:.3f}m, "
-                  f"F={force_mag:.1f}N, "
-                  f"K=[{self.current_K[0]:.0f},{self.current_K[1]:.0f}]")
+        info["in_approach_phase"] = self.in_approach_phase
+        info["dist_to_bottle"] = dist_to_bottle
 
         return total_reward, info
 
@@ -666,17 +597,22 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Reset state
         self.prev_progress = 0.0
         self.contact_made = False
+        self.in_approach_phase = True  # Start in approach phase!
         self.episode_length = 0
         self.current_K = np.array([500.0, 500.0, 1000.0])
 
-        # Clear logs
         self.force_profile_log = []
         self.stiffness_profile_log = []
+
+        # Calculate initial distance
+        dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_start[:2])
 
         print(f"\n{'=' * 50}")
         print(f"NEW EPISODE - {traj_type}")
         print(f"Bottle: ({bottle_start[0]:.2f}, {bottle_start[1]:.2f})")
-        print(f"Hand Z: {hand_pos[2]:.3f} (target: {self.target_z})")
+        print(f"Hand: ({hand_pos[0]:.2f}, {hand_pos[1]:.2f}, {hand_pos[2]:.3f})")
+        print(f"Distance to bottle: {dist_to_bottle:.3f}m")
+        print(f"Phase: APPROACH")
         print(f"{'=' * 50}")
 
         return self._get_obs(), {}
@@ -687,28 +623,35 @@ class PandaPushTrajectoryEnv(gym.Env):
 
     def step(self, action):
         """
-        Execute one step with impedance control.
+        Execute one step.
 
-        Action: [vx, vy, Kx, Ky] or [vx, vy, Fx, Fy]
+        In APPROACH phase: Move towards bottle (action influences direction)
+        In PUSH phase: Push with impedance control (action = velocity + stiffness)
         """
-        # Parse action
-        desired_vel_xy = action[:2] * self.max_cart_vel
 
-        if self.control_mode == "impedance":
-            # Map [0, 1] to [K_min, K_max]
-            self.current_K[0] = self.K_min + action[2] * (self.K_max - self.K_min)
-            self.current_K[1] = self.K_min + action[3] * (self.K_max - self.K_min)
-            stiffness_xy = self.current_K[:2]
+        if self.in_approach_phase:
+            # === APPROACH PHASE ===
+            # Compute velocity towards bottle
+            approach_vel, dist = self._compute_approach_velocity()
+
+            # RL action can slightly modify approach direction
+            approach_vel[0] += action[0] * 0.01
+            approach_vel[1] += action[1] * 0.01
+
+            cart_vel = approach_vel
+
+            # Check if approach is complete
+            if self._check_approach_complete() or self._is_touching():
+                self.in_approach_phase = False
+                print(f"Step {self.episode_length}: APPROACH COMPLETE! Switching to PUSH phase.")
         else:
-            # Force mode: map [-1, 1] to [-F_max, F_max]
-            desired_force_xy = action[2:4] * self.F_max
-            # Convert force to equivalent stiffness (simplified)
-            stiffness_xy = np.array([500.0, 500.0])  # Fixed for force mode
+            # === PUSH PHASE ===
+            cart_vel = self._compute_push_velocity(action)
 
-        # Convert to joint velocities using impedance control
-        q_dot = self._cartesian_to_joint_with_impedance(desired_vel_xy, stiffness_xy)
+        # Convert to joint velocities
+        q_dot = self._cartesian_to_joint_velocity(cart_vel)
 
-        # Integrate to position
+        # Integrate
         dt = 0.02
         self.current_qpos_target = np.clip(
             self.current_qpos_target + q_dot * dt,
@@ -721,7 +664,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         for _ in range(20):
             mujoco.mj_step(self.model, self.data)
 
-        # Log force profile
+        # Log
         contact_force = self._get_contact_force()
         self.force_profile_log.append(contact_force.copy())
         self.stiffness_profile_log.append(self.current_K[:2].copy())

@@ -55,7 +55,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Load model
         current_dir = os.path.dirname(os.path.realpath(__file__))
-        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.join(current_dir, "../robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
 
         if not os.path.exists(xml_path):
@@ -84,9 +84,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.current_qpos_target = np.zeros(7)
 
         # ==================== PUSH PARAMETERS ====================
-        self.push_speed = 0.008  # Push speed
+        self.push_speed = 0.005  # Reduced for gentler push
         self.behind_distance = 0.04  # Distance behind bottle
-        self.reposition_speed = 0.03  # Speed when repositioning
+        self.reposition_speed = 0.02  # Reduced repositioning speed
 
         # ==================== FORCE TARGETS (for reward shaping) ====================
         # These are NOT limits - they guide what the agent should LEARN
@@ -368,16 +368,93 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         return v_desired
 
-    def _cartesian_to_joint_velocity(self, cart_vel):
+    def _cartesian_to_joint_velocity(self, cart_vel, desired_yaw=None):
+        """
+        Convert Cartesian velocity to joint velocity.
+
+        Now includes ORIENTATION control!
+        - cart_vel: [vx, vy, vz] position velocity
+        - desired_yaw: desired hand rotation around Z-axis (radians)
+
+        The hand will rotate to align with the push direction!
+        """
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacBody(self.model, self.data, jacp, jacr, self.hand_body_id)
 
-        J = jacp[:, 6:13]
-        JJT = J @ J.T
-        J_pinv = J.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(3))
+        # Position Jacobian (3x7)
+        Jp = jacp[:, 6:13]
 
-        return J_pinv @ cart_vel
+        if desired_yaw is not None:
+            # Get current hand orientation (rotation matrix)
+            hand_mat = self.data.xmat[self.hand_body_id].reshape(3, 3)
+
+            # Current yaw (rotation around Z-axis)
+            current_yaw = np.arctan2(hand_mat[1, 0], hand_mat[0, 0])
+
+            # Yaw error
+            yaw_error = desired_yaw - current_yaw
+            # Wrap to [-pi, pi]
+            yaw_error = np.arctan2(np.sin(yaw_error), np.cos(yaw_error))
+
+            # Rotation velocity (around Z-axis)
+            # GENTLE rotation to avoid pushing into bottle
+            yaw_gain = 0.8  # Reduced from 2.0 for gentler rotation
+            omega_z = yaw_gain * yaw_error
+            omega_z = np.clip(omega_z, -0.5, 0.5)  # Limit rotation speed
+
+            # Full Jacobian (6x7): position + orientation
+            Jr = jacr[:, 6:13]
+            J_full = np.vstack([Jp, Jr])
+
+            # Desired velocity (6D): [vx, vy, vz, wx, wy, wz]
+            # We only care about Z rotation for yaw
+            v_full = np.array([cart_vel[0], cart_vel[1], cart_vel[2], 0, 0, omega_z])
+
+            # Pseudoinverse
+            JJT = J_full @ J_full.T
+            J_pinv = J_full.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(6))
+
+            return J_pinv @ v_full
+        else:
+            # Position only (original behavior)
+            JJT = Jp @ Jp.T
+            J_pinv = Jp.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(3))
+
+            return J_pinv @ cart_vel
+
+    def _get_desired_yaw(self, push_dir, deviation_mag):
+        """
+        Compute desired hand yaw (rotation) to align with push direction.
+
+        CRITICAL: Only rotate when deviation is significant!
+        - Small deviation (< 2cm): Keep hand straight (no rotation)
+        - Large deviation (> 2cm): Rotate to align with push direction
+
+        This prevents the hand from pushing into the bottle when on track!
+        """
+        # Straight trajectory goes in -Y direction, so default yaw = 0
+        default_yaw = 0.0
+
+        # Only rotate when deviation is significant
+        if deviation_mag < 0.02:  # Less than 2cm - NO rotation!
+            return default_yaw
+
+        # Gradual transition: 2cm to 4cm
+        if deviation_mag < 0.04:
+            # Blend between default and push direction
+            blend = (deviation_mag - 0.02) / 0.02  # 0 to 1
+        else:
+            blend = 1.0  # Full rotation
+
+        # Desired yaw based on push direction
+        # Push direction yaw: hand -X axis points in push_dir
+        push_yaw = np.arctan2(-push_dir[0], -push_dir[1])
+
+        # Blend between default and push yaw
+        desired_yaw = (1 - blend) * default_yaw + blend * push_yaw
+
+        return desired_yaw
 
     # ==================================================================
     #                      TRAJECTORY
@@ -686,6 +763,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
+        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
+
         if self.in_approach:
             cart_vel, dist = self._compute_approach_velocity()
             if dist < 0.05 or self._is_touching():
@@ -694,7 +773,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         else:
             cart_vel = self._compute_push_velocity(action)
 
-        q_dot = self._cartesian_to_joint_velocity(cart_vel)
+        # For now, DISABLE orientation control - just position
+        # We'll add rotation back once basic push works
+        q_dot = self._cartesian_to_joint_velocity(cart_vel, desired_yaw=None)
 
         dt = 0.02
         self.current_qpos_target = np.clip(

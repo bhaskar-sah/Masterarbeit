@@ -1,30 +1,37 @@
 """
-Panda Push Environment - Direction Vector Concept
+Panda Push Environment - STABLE VERSION
 
-USER'S CONCEPT (from drawing):
-- Hand always stays behind bottle
-- A "direction vector" always points from bottle towards trajectory
-- Push force = Forward (along path) + Correction (towards path)
-- Correction strength is proportional to deviation
+KEY INSIGHT: With a round-bottom bottle, sideways correction causes tipping!
 
-This is ONE CONTINUOUS BEHAVIOR, not separate modes!
+SOLUTION:
+1. Push STRAIGHT (along trajectory) - this is stable
+2. Keep hand CENTERED behind bottle at all times
+3. If deviation starts, REPOSITION hand to push bottle back towards trajectory
+4. The hand position determines push direction, not a separate correction force
 
-    Trajectory ═══════════════════════════════════════
-                        ↑
-                        │ correction_vector (always present!)
-                        │ magnitude = deviation distance
-                       🍾 Bottle
-                        ↑
-                        │ forward_vector (along tangent)
-                      ┌───┐
-                      │🤖│ Hand: pushes with forward + correction
-                      └───┘
+    STABLE PUSH (hand centered behind bottle):
 
-    Total push = forward_vector + K * correction_vector
+        Trajectory ═══════════════════════════════════
+                           │
+                          🍾 Bottle (on path)
+                           │
+                         ┌───┐
+                         │🤖│ Hand directly behind
+                         └───┘
+                           │
+                           ▼ Push straight forward = STABLE!
 
-    Where K (stiffness) is what the RL agent learns!
-    - High K = Strong correction (stiff spring pulls bottle back)
-    - Low K = Weak correction (soft spring, bottle drifts more)
+
+    WHEN DEVIATED (hand repositions to push back):
+
+        Trajectory ═══════════════════════════════════
+                           ↑
+                           │ Direction to trajectory
+                          🍾 Bottle (deviated)
+                         ╱
+                       ┌───┐
+                       │🤖│ Hand repositions to push bottle
+                       └───┘   back towards trajectory
 """
 
 import gymnasium as gym
@@ -37,10 +44,7 @@ import os
 
 class PandaPushTrajectoryEnv(gym.Env):
     """
-    Direction Vector concept:
-    - Hand stays behind bottle
-    - Push = Forward + K * Correction
-    - K (stiffness) is learned by RL
+    Stable push environment - hand position determines push direction.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
@@ -50,7 +54,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Load model
         current_dir = os.path.dirname(os.path.realpath(__file__))
-        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.join(current_dir, "../robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
 
         if not os.path.exists(xml_path):
@@ -63,7 +67,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.home_key_id = self.model.key("home").id
         self.bottle_body_id = self.model.body("bottle").id
         self.hand_body_id = self.model.body("hand").id
-        self.goal_site_id = self.model.site("goal").id
         self.left_finger_body_id = self.model.body("left_finger").id
         self.right_finger_body_id = self.model.body("right_finger").id
 
@@ -80,42 +83,25 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.current_qpos_target = np.zeros(7)
 
         # ==================== PUSH PARAMETERS ====================
-        self.base_forward_speed = 0.008  # Reduced for gentler push (prevents tipping)
-        self.behind_distance = 0.04  # Distance behind bottle
-
-        # ==================== WRIST ROTATION (for faster correction) ====================
-        # Joint 7 (wrist) rotates independently to help hand get behind bottle faster
-        # This is ADDITIONAL to the existing arm control - makes correction quicker
-        # tuning this parameter
-        self.wrist_rotation_gain = 5.0  # How fast wrist responds to deviation
-        self.max_wrist_rotation = 0.4  # Max rotation in radians (~23 degrees)
-        self.wrist_offset = 0.0  # Current wrist rotation offset
-        self.base_wrist_pos = 0.0  # Base wrist position (saved at reset)
+        self.push_speed = 0.008  # Very gentle push speed
+        self.behind_distance = 0.035  # Distance behind bottle
+        self.reposition_speed = 0.015  # Speed when repositioning
 
         # ==================== STIFFNESS (What RL learns!) ====================
-        # K determines how strongly the correction vector pulls bottle back
-        self.K_min = 100.0  # Minimum stiffness (increased from 50)
-        self.K_max = 500.0  # Maximum stiffness
-        self.current_K = np.array([300.0, 300.0])  # [Kx, Ky]
+        self.K_min = 100.0
+        self.K_max = 500.0
+        self.current_K = np.array([300.0, 300.0])
 
-        # Correction gains - TWO COMPONENTS:
-        # 1. BASE correction: Always applies, ensures minimum correction
-        self.base_correction_gain = 0.25  # Reduced to prevent tipping!
+        # ==================== TILT THRESHOLDS ====================
+        self.tilt_ok = 0.995  # Perfect
+        self.tilt_slow = 0.99  # Slow down
+        self.tilt_stop = 0.98  # Stop pushing
+        self.tilt_settle = 0.97  # Enter settle mode
 
-        # 2. K-dependent correction: Additional correction from learned K
-        self.k_correction_gain = 0.35  # Scales with K
-
-        # Total correction = (base_gain + K/K_max * k_gain) * deviation
-        # Even with K=K_min, correction is significant!
-
-        # ==================== TILT SAFETY ====================
-        self.tilt_ok = 0.99
-        self.tilt_slow = 0.98
-        self.tilt_stop = 0.96
-
+        # Settle state
         self.is_settling = False
         self.settle_counter = 0
-        self.settle_required = 25
+        self.settle_required = 30
 
         # Cartesian control
         self.target_z = 0.93
@@ -131,15 +117,15 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Phase
         self.in_approach = True
 
-        # Action space: [forward_mod, lateral_mod, Kx, Ky]
+        # Action space: [speed_mod, K_x, K_y, unused]
         self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+            low=np.array([-1.0, 0.0, 0.0, -1.0], dtype=np.float32),
             high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
 
         # Observation space
-        obs_dim = 36
+        obs_dim = 34  # Fixed: matches actual observation size
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -148,215 +134,71 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.render_mode = render_mode
         self.viewer = None
         self.episode_length = 0
-        self.max_episode_length = 2500
+        self.max_episode_length = 3000
         self.prev_progress = 0.0
 
         # Logging
-        self.force_profile_log = []
-        self.stiffness_profile_log = []
+        self.force_log = []
+        self.stiffness_log = []
         self.deviation_log = []
-        self.correction_log = []
 
         print(f"\n{'=' * 60}")
-        print("DIRECTION VECTOR CONCEPT + WRIST ROTATION")
+        print("STABLE PUSH - Hand Position Controls Direction")
         print(f"{'=' * 60}")
-        print("Push = Forward_vector + K * Correction_vector")
-        print(f"K range: [{self.K_min}, {self.K_max}] N/m")
-        print(f"Base correction gain: {self.base_correction_gain}")
-        print(f"K correction gain: {self.k_correction_gain}")
-        print(f"Wrist rotation: max {np.degrees(self.max_wrist_rotation):.1f}°")
+        print(f"Push speed: {self.push_speed * 1000:.1f} mm/s")
+        print(f"Tilt thresholds: OK>{self.tilt_ok}, Slow>{self.tilt_slow}, Stop>{self.tilt_stop}")
         print(f"{'=' * 60}")
 
     # ==================================================================
-    #           CORE CONCEPT: Direction Vectors
+    #           CORE: Hand Target Position
     # ==================================================================
-
-    def _get_forward_vector(self, bottle_xy):
-        """
-        Forward vector: Direction along trajectory towards goal.
-        This is the tangent to the trajectory at bottle's closest point.
-        """
-        return self._get_path_tangent(bottle_xy)
-
-    def _get_correction_vector(self, bottle_xy):
-        """
-        Correction vector: Points from bottle TOWARDS trajectory.
-        Magnitude = deviation distance (how far bottle is from path)
-
-        This vector is ALWAYS present, even when deviation is small!
-        It acts like a spring pulling the bottle back to the path.
-        """
-        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
-        return deviation_vec, deviation_mag
 
     def _get_hand_target_position(self, bottle_xy):
         """
-        Hand stays BEHIND the bottle.
-        "Behind" means opposite to the combined push direction.
+        Compute where hand should be.
+
+        KEY: Hand position determines push direction!
+        - Hand behind bottle → pushes forward
+        - Hand offset to side → pushes bottle sideways (towards trajectory)
+
+        We blend between:
+        1. Behind bottle (for forward push)
+        2. Offset to push towards trajectory (for correction)
         """
-        forward_vec = self._get_forward_vector(bottle_xy)
-        correction_vec, correction_mag = self._get_correction_vector(bottle_xy)
+        tangent = self._get_path_tangent(bottle_xy)
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
 
-        # Combined push direction (normalized)
-        # Weight correction by stiffness
-        K_normalized = np.mean(self.current_K) / self.K_max
+        # Base position: directly behind bottle (for straight push)
+        base_pos = bottle_xy - tangent * self.behind_distance
 
-        if correction_mag > 0.001:
-            correction_dir = correction_vec / correction_mag
-            # Blend: more correction when deviation is large
-            correction_weight = min(correction_mag * 10 * K_normalized, 0.6)
-            combined_dir = (1 - correction_weight) * forward_vec + correction_weight * correction_dir
-            combined_dir = combined_dir / (np.linalg.norm(combined_dir) + 1e-6)
+        # Correction offset: shift hand to push bottle towards trajectory
+        if deviation_mag > 0.005:  # Only correct if deviation > 5mm
+            # Direction from bottle to trajectory
+            correction_dir = deviation_vec / (deviation_mag + 1e-6)
+
+            # Offset hand in the OPPOSITE direction
+            # So when we push forward, bottle goes towards trajectory
+            # The offset is proportional to deviation (more deviation = more offset)
+            K_avg = np.mean(self.current_K)
+            K_factor = K_avg / self.K_max  # 0.2 to 1.0
+
+            # Max offset is limited to prevent too much sideways push
+            max_offset = 0.03  # 3cm max offset
+            offset_amount = min(deviation_mag * K_factor * 2.0, max_offset)
+
+            # Offset perpendicular to push direction (to the side)
+            # This creates a slight angle in the push
+            offset = -correction_dir * offset_amount
+
+            target_pos = base_pos + offset
         else:
-            combined_dir = forward_vec
+            target_pos = base_pos
 
-        # Hand position: behind bottle relative to push direction
-        hand_xy = bottle_xy - combined_dir * self.behind_distance
-
-        return np.array([hand_xy[0], hand_xy[1], self.target_z])
+        return np.array([target_pos[0], target_pos[1], self.target_z])
 
     # ==================================================================
     #           VELOCITY COMPUTATION
     # ==================================================================
-
-    def _compute_approach_velocity(self):
-        """Approach: Move behind bottle."""
-        hand_pos = self.data.xpos[self.hand_body_id]
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-
-        target_pos = self._get_hand_target_position(bottle_xy)
-        error = target_pos - hand_pos
-        dist = np.linalg.norm(error[:2])
-
-        v_desired = error * 2.0
-        v_mag = np.linalg.norm(v_desired[:2])
-        if v_mag > 0.04:
-            v_desired[:2] = v_desired[:2] / v_mag * 0.04
-
-        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-
-        return v_desired, dist
-
-    def _compute_push_velocity(self, action):
-        """
-        MAIN CONCEPT: Push = Forward + K * Correction
-
-        The RL agent controls:
-        - forward_mod: How fast to push forward
-        - Kx, Ky: Stiffness for correction (FORCE PROFILE!)
-        """
-        hand_pos = self.data.xpos[self.hand_body_id]
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-        tilt = self._get_bottle_tilt()
-
-        # Get direction vectors
-        forward_vec = self._get_forward_vector(bottle_xy)
-        correction_vec, correction_mag = self._get_correction_vector(bottle_xy)
-
-        # Parse action
-        forward_mod = action[0]  # Modifies forward speed
-
-        # STIFFNESS from action - THIS IS THE LEARNED FORCE PROFILE!
-        self.current_K[0] = self.K_min + action[2] * (self.K_max - self.K_min)
-        self.current_K[1] = self.K_min + action[3] * (self.K_max - self.K_min)
-        K_avg = np.mean(self.current_K)
-
-        # ==================== TILT SAFETY ====================
-        if self.is_settling:
-            if self._check_stable():
-                self.settle_counter += 1
-                if self.settle_counter >= self.settle_required:
-                    self.is_settling = False
-                    self.settle_counter = 0
-            else:
-                self.settle_counter = 0
-            # During settling: no push
-            v_desired = np.zeros(3)
-            target_pos = self._get_hand_target_position(bottle_xy)
-            error = target_pos[:2] - hand_pos[:2]
-            v_desired[0] = error[0] * 0.5
-            v_desired[1] = error[1] * 0.5
-            v_desired[:2] = np.clip(v_desired[:2], -0.01, 0.01)
-            v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-            return v_desired
-
-        if tilt < self.tilt_stop:
-            self.is_settling = True
-            self.settle_counter = 0
-
-        # Speed multiplier based on tilt
-        if tilt > self.tilt_ok:
-            speed_mult = 1.0
-        elif tilt > self.tilt_slow:
-            speed_mult = 0.5
-        else:
-            speed_mult = 0.2
-
-        # ==================== COMPUTE PUSH VELOCITY ====================
-        v_desired = np.zeros(3)
-
-        # 1. FORWARD COMPONENT: Along trajectory tangent
-        forward_speed = self.base_forward_speed * (1.0 + forward_mod * 0.3) * speed_mult
-        v_forward = forward_vec * forward_speed
-
-        # 2. CORRECTION COMPONENT: Towards trajectory
-        # TWO PARTS: Base correction (always) + K-dependent correction (learned)
-        if correction_mag > 0.001:
-            correction_dir = correction_vec / correction_mag
-
-            # Base correction: ALWAYS applies (ensures minimum correction)
-            base_correction = self.base_correction_gain * correction_mag
-
-            # K-dependent correction: Additional correction from learned stiffness
-            k_correction = (K_avg / self.K_max) * self.k_correction_gain * correction_mag
-
-            # Total correction speed
-            correction_speed = (base_correction + k_correction) * speed_mult
-
-            # IMPORTANT: Reduce correction when bottle is tilting!
-            # Sideways pushing causes tipping - be gentle when tilted
-            if tilt < 0.99:
-                # Reduce correction proportionally to tilt
-                tilt_factor = max((tilt - 0.95) / (0.99 - 0.95), 0.1)  # 0.1 to 1.0
-                correction_speed *= tilt_factor
-
-            correction_speed = min(correction_speed, 0.020)  # Limit max
-
-            v_correction = correction_dir * correction_speed
-
-            # Debug output
-            if self.episode_length % 100 == 0 and correction_mag > 0.01:
-                tilt_factor = max((tilt - 0.95) / (0.99 - 0.95), 0.1) if tilt < 0.99 else 1.0
-                print(f"    Correction: base={base_correction * 1000:.1f} + K={k_correction * 1000:.1f} "
-                      f"x tilt_factor={tilt_factor:.2f} = {correction_speed * 1000:.1f} mm/s")
-        else:
-            v_correction = np.zeros(2)
-
-        # 3. STAY BEHIND BOTTLE
-        target_pos = self._get_hand_target_position(bottle_xy)
-        pos_error = target_pos[:2] - hand_pos[:2]
-        v_tracking = pos_error * 2.0
-        v_tracking = np.clip(v_tracking, -0.02, 0.02)
-
-        # Combine all components
-        v_desired[0] = v_forward[0] + v_correction[0] + v_tracking[0]
-        v_desired[1] = v_forward[1] + v_correction[1] + v_tracking[1]
-
-        # Limit total velocity
-        v_desired[:2] = np.clip(v_desired[:2], -0.04, 0.04)
-
-        # Height control
-        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-
-        # Log for visualization
-        self.correction_log.append({
-            'deviation': correction_mag,
-            'K': K_avg,
-            'correction_speed': np.linalg.norm(v_correction),
-            'forward_speed': np.linalg.norm(v_forward)
-        })
-
-        return v_desired
 
     def _get_bottle_tilt(self):
         bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
@@ -365,7 +207,109 @@ class PandaPushTrajectoryEnv(gym.Env):
     def _check_stable(self):
         tilt = self._get_bottle_tilt()
         angvel = np.linalg.norm(self.data.qvel[3:6])
-        return tilt > 0.99 and angvel < 0.1
+        return tilt > 0.995 and angvel < 0.05
+
+    def _compute_approach_velocity(self):
+        """Move to position behind bottle."""
+        hand_pos = self.data.xpos[self.hand_body_id]
+        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
+
+        target_pos = self._get_hand_target_position(bottle_xy)
+        error = target_pos - hand_pos
+        dist = np.linalg.norm(error[:2])
+
+        v_desired = error * 1.5
+        v_mag = np.linalg.norm(v_desired[:2])
+        if v_mag > 0.03:
+            v_desired[:2] = v_desired[:2] / v_mag * 0.03
+
+        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+
+        return v_desired, dist
+
+    def _compute_push_velocity(self, action):
+        """
+        Push velocity - hand position determines direction!
+
+        1. Move hand to target position (includes correction offset)
+        2. Push forward along trajectory
+        3. The offset naturally creates angled push for correction
+        """
+        hand_pos = self.data.xpos[self.hand_body_id]
+        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
+        tilt = self._get_bottle_tilt()
+
+        tangent = self._get_path_tangent(bottle_xy)
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+
+        # Parse action
+        speed_mod = action[0]
+        self.current_K[0] = self.K_min + action[1] * (self.K_max - self.K_min)
+        self.current_K[1] = self.K_min + action[2] * (self.K_max - self.K_min)
+
+        # ==================== SETTLING ====================
+        if self.is_settling:
+            if self._check_stable():
+                self.settle_counter += 1
+                if self.settle_counter >= self.settle_required:
+                    self.is_settling = False
+                    self.settle_counter = 0
+            else:
+                self.settle_counter = 0
+
+            # During settling: just hold position
+            target_pos = self._get_hand_target_position(bottle_xy)
+            error = target_pos - hand_pos
+            v_desired = error * 0.3
+            v_desired[:2] = np.clip(v_desired[:2], -0.005, 0.005)
+            v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+            return v_desired
+
+        # Check if need to settle
+        if tilt < self.tilt_settle:
+            self.is_settling = True
+            self.settle_counter = 0
+
+        # ==================== SPEED CONTROL ====================
+        if tilt > self.tilt_ok:
+            speed_mult = 1.0
+        elif tilt > self.tilt_slow:
+            speed_mult = 0.6
+        elif tilt > self.tilt_stop:
+            speed_mult = 0.2
+        else:
+            speed_mult = 0.0
+
+        # ==================== COMPUTE VELOCITY ====================
+        v_desired = np.zeros(3)
+
+        # 1. Move to target position (includes correction offset!)
+        target_pos = self._get_hand_target_position(bottle_xy)
+        pos_error = target_pos[:2] - hand_pos[:2]
+        pos_error_mag = np.linalg.norm(pos_error)
+
+        # Repositioning velocity
+        if pos_error_mag > 0.005:
+            v_reposition = pos_error * 2.0
+            v_reposition = np.clip(v_reposition, -self.reposition_speed, self.reposition_speed)
+        else:
+            v_reposition = np.zeros(2)
+
+        # 2. Push forward along trajectory
+        push_speed = self.push_speed * (1.0 + speed_mod * 0.3) * speed_mult
+        v_push = tangent * push_speed
+
+        # Combine
+        v_desired[0] = v_reposition[0] + v_push[0]
+        v_desired[1] = v_reposition[1] + v_push[1]
+
+        # Limit total velocity
+        v_desired[:2] = np.clip(v_desired[:2], -0.025, 0.025)
+
+        # Height
+        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+
+        return v_desired
 
     def _cartesian_to_joint_velocity(self, cart_vel):
         jacp = np.zeros((3, self.model.nv))
@@ -378,38 +322,6 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         return J_pinv @ cart_vel
 
-    def _compute_wrist_rotation(self, bottle_xy):
-        """
-        Compute wrist rotation to help hand get behind bottle faster.
-
-        The wrist rotates based on deviation direction:
-        - Bottle RIGHT of trajectory → Wrist rotates LEFT (negative)
-        - Bottle LEFT of trajectory → Wrist rotates RIGHT (positive)
-
-        This helps the hand "glide" around the bottle surface to get
-        into the correct pushing position faster than arm movement alone.
-        """
-        correction_vec, deviation_mag = self._get_correction_vector(bottle_xy)
-
-        # Only rotate when deviation is significant (> 1cm)
-        if deviation_mag < 0.01:
-            return 0.0  # No rotation needed when on track
-
-        # K factor - higher K means more rotation (matches force profile)
-        K_avg = np.mean(self.current_K)
-        K_factor = K_avg / self.K_max
-
-        # Rotation based on deviation direction
-        # correction_vec points FROM bottle TO trajectory
-        # For straight trajectory: correction_vec[0] > 0 means bottle is RIGHT
-        # We rotate opposite: bottle RIGHT → wrist LEFT (negative rotation)
-        target_rotation = -correction_vec[0] * K_factor * self.wrist_rotation_gain
-
-        # Clamp to max rotation
-        target_rotation = np.clip(target_rotation, -self.max_wrist_rotation, self.max_wrist_rotation)
-
-        return target_rotation
-
     # ==================================================================
     #                      TRAJECTORY
     # ==================================================================
@@ -420,8 +332,6 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         if traj_type == "straight":
             end = start + np.array([0.0, -0.4])
-        elif traj_type == "straight_short":
-            end = start + np.array([0.0, -0.25])
         elif traj_type == "diagonal":
             end = start + np.array([0.15, -0.3])
         elif traj_type == "curved":
@@ -429,11 +339,6 @@ class PandaPushTrajectoryEnv(gym.Env):
             radius = 0.2
             x = start[0] + radius * np.sin(t)
             y = start[1] - radius * (1 - np.cos(t))
-            return np.stack([x, y], axis=1).astype(np.float32)
-        elif traj_type == "s_curve":
-            t = np.linspace(0, 1, n_points)
-            x = start[0] + 0.08 * np.sin(2 * np.pi * t)
-            y = start[1] - 0.35 * t
             return np.stack([x, y], axis=1).astype(np.float32)
         else:
             end = start + np.array([0.0, -0.3])
@@ -459,7 +364,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         return idx, closest_pt, arc_len
 
     def _get_path_deviation(self, bottle_xy):
-        """Returns vector FROM bottle TO trajectory, and its magnitude."""
         _, closest_pt, _ = self._get_closest_point_on_trajectory(bottle_xy)
         deviation_vec = closest_pt - bottle_xy
         return deviation_vec.astype(np.float32), float(np.linalg.norm(deviation_vec))
@@ -527,18 +431,14 @@ class PandaPushTrajectoryEnv(gym.Env):
         dist_to_bottle = np.linalg.norm(hand_to_bottle)
         dir_to_bottle = hand_to_bottle / (dist_to_bottle + 1e-6)
 
-        # Direction vectors (the key concept!)
-        forward_vec = self._get_forward_vector(bottle_xy)
-        correction_vec, correction_mag = self._get_correction_vector(bottle_xy)
-
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
         tangent = self._get_path_tangent(bottle_xy)
         progress = self._get_progress(bottle_xy)
         contact_force = self._get_contact_force()
         is_touching = np.array([1.0 if self._is_touching() else 0.0], dtype=np.float32)
-        tilt = self._get_bottle_tilt()
+        tilt = np.array([self._get_bottle_tilt()], dtype=np.float32)
 
         K_normalized = (self.current_K - self.K_min) / (self.K_max - self.K_min)
-        settling_flag = np.array([1.0 if self.is_settling else 0.0], dtype=np.float32)
 
         obs = np.concatenate([
             qpos,  # 7
@@ -547,14 +447,13 @@ class PandaPushTrajectoryEnv(gym.Env):
             bottle_pos,  # 3
             dir_to_bottle,  # 2
             [dist_to_bottle],  # 1
-            correction_vec,  # 2 (direction to trajectory)
-            [correction_mag],  # 1 (deviation magnitude)
+            deviation_vec,  # 2
+            [deviation_mag],  # 1
             tangent,  # 2
             [progress],  # 1
-            contact_force,  # 3
+            contact_force[:2],  # 2 (only XY force)
             is_touching,  # 1
             K_normalized,  # 2
-            settling_flag,  # 1
         ])
 
         return obs.astype(np.float32)
@@ -569,7 +468,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
         hand_pos = self.data.xpos[self.hand_body_id]
 
-        correction_vec, deviation_mag = self._get_correction_vector(bottle_xy)
+        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
         progress = self._get_progress(bottle_xy)
         tilt = self._get_bottle_tilt()
         is_touching = self._is_touching()
@@ -578,8 +477,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_xy)
 
         if self.in_approach:
-            total_reward = -2.0 * dist_to_bottle
-            total_reward += -5.0 * abs(hand_pos[2] - self.target_z)
+            total_reward = -2.0 * dist_to_bottle - 5.0 * abs(hand_pos[2] - self.target_z)
             if is_touching or dist_to_bottle < 0.06:
                 total_reward += 10.0
                 self.in_approach = False
@@ -587,50 +485,50 @@ class PandaPushTrajectoryEnv(gym.Env):
             if self.episode_length % 50 == 0:
                 print(f"Step {self.episode_length} [APPROACH]: dist={dist_to_bottle:.3f}m")
         else:
-            # Progress reward
+            # Progress (most important!)
             progress_delta = progress - self.prev_progress
-            r_progress = 100.0 * max(progress_delta, 0)
+            r_progress = 150.0 * max(progress_delta, 0)
 
-            # Deviation reward - reward staying on path!
-            if deviation_mag < 0.015:
-                r_deviation = 5.0  # On path - big reward!
-            elif deviation_mag < 0.03:
-                r_deviation = 2.0
+            # Deviation penalty
+            if deviation_mag < 0.02:
+                r_deviation = 3.0
             elif deviation_mag < 0.05:
-                r_deviation = 0.0
+                r_deviation = 1.0
+            elif deviation_mag < 0.10:
+                r_deviation = -5.0 * deviation_mag
             else:
-                r_deviation = -10.0 * deviation_mag
+                r_deviation = -15.0 * deviation_mag
 
-            # Stability reward
+            # Stability (critical!)
             if tilt > 0.995:
-                r_stability = 3.0
+                r_stability = 5.0
             elif tilt > 0.99:
-                r_stability = 1.0
+                r_stability = 2.0
             elif tilt > 0.98:
                 r_stability = 0.0
+            elif tilt > 0.97:
+                r_stability = -5.0
             else:
-                r_stability = -15.0 * (1 - tilt)
+                r_stability = -20.0
 
-            # Contact reward
-            r_contact = 0.5 if is_touching else -0.5 * dist_to_bottle
+            # Contact
+            r_contact = 0.5 if is_touching else -0.3
 
             total_reward = r_progress + r_deviation + r_stability + r_contact
 
-            # Print status with correction info
+            # Debug print
             if self.episode_length % 50 == 0:
-                K_avg = np.mean(self.current_K)
                 mode = "SETTLE" if self.is_settling else "PUSH"
-                wrist_deg = np.degrees(self.wrist_offset)
+                K_avg = np.mean(self.current_K)
                 print(f"Step {self.episode_length} [{mode}]: "
                       f"prog={progress:.1%}, dev={deviation_mag:.3f}m, "
-                      f"K={K_avg:.0f}, F={force_mag:.1f}N, tilt={tilt:.4f}, "
-                      f"wrist={wrist_deg:.1f}°")
+                      f"K={K_avg:.0f}, F={force_mag:.1f}N, tilt={tilt:.4f}")
 
-        total_reward -= 0.005
+        total_reward -= 0.005  # Time penalty
 
         # Success
         if progress > 0.95 and deviation_mag < self.path_tolerance:
-            total_reward += 100.0
+            total_reward += 150.0
             info["is_success"] = True
             print(f"SUCCESS at step {self.episode_length}!")
 
@@ -649,7 +547,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         info["deviation"] = deviation_mag
         info["force_magnitude"] = force_mag
         info["bottle_tilt"] = tilt
-        info["stiffness"] = np.mean(self.current_K)
 
         return total_reward, info
 
@@ -682,68 +579,37 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.prev_progress = 0.0
         self.in_approach = True
         self.episode_length = 0
-        self.current_K = np.array([200.0, 200.0])
+        self.current_K = np.array([300.0, 300.0])
         self.is_settling = False
         self.settle_counter = 0
 
-        # Initialize wrist rotation
-        self.base_wrist_pos = self.current_qpos_target[6]  # Save base wrist position
-        self.wrist_offset = 0.0  # Reset wrist offset
-
-        self.force_profile_log = []
-        self.stiffness_profile_log = []
+        self.force_log = []
+        self.stiffness_log = []
         self.deviation_log = []
-        self.correction_log = []
 
         print(f"\n{'=' * 50}")
         print(f"EPISODE: {traj_type}")
         print(f"Bottle: ({bottle_start[0]:.2f}, {bottle_start[1]:.2f})")
-        print(f"Push = Forward + K * Correction")
         print(f"{'=' * 50}")
 
         return self._get_obs(), {}
 
     def step(self, action):
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-
         if self.in_approach:
             cart_vel, dist = self._compute_approach_velocity()
-            target_wrist_rotation = 0.0  # No wrist rotation during approach
-            if dist < 0.06 or self._is_touching():
+            if dist < 0.05 or self._is_touching():
                 self.in_approach = False
                 print(f"Step {self.episode_length}: → PUSH phase")
         else:
             cart_vel = self._compute_push_velocity(action)
-            # Compute wrist rotation for faster correction
-            target_wrist_rotation = self._compute_wrist_rotation(bottle_xy)
 
-        # Convert Cartesian velocity to joint velocities (joints 1-6 via Jacobian)
         q_dot = self._cartesian_to_joint_velocity(cart_vel)
 
         dt = 0.02
-
-        # Update joints 1-6 from Jacobian (existing behavior)
-        self.current_qpos_target[:6] = np.clip(
-            self.current_qpos_target[:6] + q_dot[:6] * dt,
-            self.act_low[:6], self.act_high[:6]
+        self.current_qpos_target = np.clip(
+            self.current_qpos_target + q_dot * dt,
+            self.act_low, self.act_high
         )
-
-        # Update joint 7 (wrist) separately for faster correction
-        # Smoothly move wrist towards target rotation
-        wrist_error = target_wrist_rotation - self.wrist_offset
-        wrist_speed = 2.0 * wrist_error  # Proportional control
-        wrist_speed = np.clip(wrist_speed, -0.5, 0.5)  # Limit rotation speed
-
-        self.wrist_offset += wrist_speed * dt
-        self.wrist_offset = np.clip(self.wrist_offset, -self.max_wrist_rotation, self.max_wrist_rotation)
-
-        # Set wrist joint target (base + offset)
-        self.current_qpos_target[6] = np.clip(
-            self.base_wrist_pos + self.wrist_offset,
-            self.act_low[6], self.act_high[6]
-        )
-
-        # Send commands to actuators
         self.data.ctrl[:7] = self.current_qpos_target
 
         for _ in range(20):
@@ -754,8 +620,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
         _, dev = self._get_path_deviation(bottle_xy)
 
-        self.force_profile_log.append(force.copy())
-        self.stiffness_profile_log.append(self.current_K.copy())
+        self.force_log.append(np.linalg.norm(force))
+        self.stiffness_log.append(np.mean(self.current_K))
         self.deviation_log.append(dev)
 
         obs = self._get_obs()
@@ -777,16 +643,3 @@ class PandaPushTrajectoryEnv(gym.Env):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
-
-    def get_learned_profile(self):
-        """Get logged data showing the learned force profile."""
-        return {
-            'forces': np.array(self.force_profile_log),
-            'stiffness': np.array(self.stiffness_profile_log),
-            'deviations': np.array(self.deviation_log),
-            'corrections': self.correction_log
-        }
-
-    def set_trajectory(self, trajectory_xy):
-        self.trajectory = trajectory_xy.astype(np.float32)
-        self._compute_arc_length()
