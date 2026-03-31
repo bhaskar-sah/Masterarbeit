@@ -138,11 +138,11 @@
     <body name="bottle" pos="0.2 0.0 0.805">
       <joint name="bottle_joint" type="free" damping="0.01" />
 
-      <geom type="cylinder" size="0.04 0.09" pos="0 0 0.09" rgba="0 0 1 0.5"
+      <geom type="cylinder" size="0.04 0.05" pos="0 0 0.06" rgba="0 0 1 0.5"
             material="bottle_mat"
             contype="0" conaffinity="0" group="1" density="0"/>
 
-      <geom type="cylinder" size="0.039 0.09" pos="0 0 0.09"
+      <geom type="cylinder" size="0.039 0.05" pos="0 0 0.06"
             mass="0.5" rgba="0 0 0 0"
             condim="4" friction="0.8 0.005 0.0001"
             contype="1" conaffinity="1"
