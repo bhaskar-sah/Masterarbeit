@@ -9,8 +9,9 @@ class TrajectoryManager:
         self.total_arc_length = 0.0
         self.goal_position = goal_position
         self.path_tolerance = path_tolerance
+        self.trajectory_type = "straight"
 
-    def _generate_trajectory(self, bottle_start_xy, traj_type="straight"):
+    def generate_trajectory(self, bottle_start_xy, traj_type="straight"):
         """Generate trajectory from bottle start position to fixed goal"""
         start = bottle_start_xy.copy()
         n_points = 50
@@ -39,8 +40,9 @@ class TrajectoryManager:
             t = np.linspace(0, 1, n_points)
             self.trajectory = np.outer(1 - t, start) + np.outer(t, goal)
 
+        self.trajectory_type = traj_type
         self.trajectory = self.trajectory.astype(np.float32)
-        self._computer_arc_length()
+        self._compute_arc_length()
         return self.trajectory
 
 
