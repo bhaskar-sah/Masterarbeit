@@ -23,6 +23,7 @@ import mujoco.viewer
 import numpy as np
 import os
 
+from config import EnvConfig
 from trajectory import TrajectoryManager
 from contact import ContactManager
 from push_controller import PushController
@@ -41,8 +42,10 @@ class PandaPushTrajectoryEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, render_mode=None, trajectory_type="straight"):
+    def __init__(self, render_mode=None, trajectory_type="straight", config: EnvConfig = None):
         super().__init__()
+
+        cfg = config if config is not None else EnvConfig()
 
         # Load model
         current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -75,42 +78,24 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.act_high = self.actuator_ranges[:, 1]
         self.current_qpos_target = np.zeros(7)
 
-        # ==================== PUSH PARAMETERS ====================
-        self.base_forward_speed = 0.015  # Base push speed
-        self.behind_distance = 0.04  # Distance hand stays behind bottle
+        # Config shortcuts (for readability in step/reset)
+        self.K_min = cfg.K_min
+        self.K_max = cfg.K_max
+        self.max_wrist_rotation = cfg.max_wrist_rotation
+        self.max_episode_length = cfg.max_episode_length
 
-        # ==================== LOOKAHEAD PARAMETERS ====================
-        self.lookahead_points = 4  # Look 4 points ahead on trajectory
-
-        # ==================== WRIST ROTATION ====================
-        self.gripper_push_angle_at_home = -np.pi / 2  # -90 degrees
-        self.max_wrist_rotation = 2.5 # Allow more rotation
+        # Wrist state
         self.wrist_offset = 0.0
         self.base_wrist_pos = 0.0
-
-        # ==================== STIFFNESS (What RL learns!) ====================
-        self.K_min = 100.0
-        self.K_max = 500.0
-        self.current_K = np.array([300.0, 300.0])
-
-        # ==================== TILT SAFETY ====================
-        self.tilt_ok = 0.99
-        self.tilt_slow = 0.98
-        self.tilt_stop = 0.96
-
-        # is_settling and settle_counter are owned by push_ctrl
-        self.settle_required = 25
-
-        # ==================== CARTESIAN CONTROL ====================
-        self.target_z = 0.92
-        self.z_gain = 10.0
-        self.damping = 0.01
 
         # ==================== CONTACT ====================
         self.contact_manager = ContactManager(self.model, self.data, self.robot_contact_bodies, self.bottle_body_id)
 
         # ==================== TRAJECTORY ====================
-        self.traj_manager = TrajectoryManager(goal_position=np.array([0.4, -0.2]), path_tolerance=0.05)
+        self.traj_manager = TrajectoryManager(
+            goal_position=cfg.goal_position,
+            path_tolerance=cfg.path_tolerance,
+        )
         self.goal_position = self.traj_manager.goal_position
 
         # ==================== PUSH CONTROLLER ====================
@@ -124,18 +109,18 @@ class PandaPushTrajectoryEnv(gym.Env):
             hand_body_id=self.hand_body_id,
             bottle_body_id=self.bottle_body_id,
             goal_position=self.goal_position,
-            lookahead_points=self.lookahead_points,
-            base_forward_speed=self.base_forward_speed,
-            behind_distance=self.behind_distance,
-            target_z=self.target_z,
-            z_gain=self.z_gain,
-            damping=self.damping,
-            K_min=self.K_min,
-            K_max=self.K_max,
-            tilt_ok=self.tilt_ok,
-            tilt_slow=self.tilt_slow,
-            tilt_stop=self.tilt_stop,
-            settle_required=self.settle_required,
+            lookahead_points=cfg.lookahead_points,
+            base_forward_speed=cfg.base_forward_speed,
+            behind_distance=cfg.behind_distance,
+            target_z=cfg.target_z,
+            z_gain=cfg.z_gain,
+            damping=cfg.damping,
+            K_min=cfg.K_min,
+            K_max=cfg.K_max,
+            tilt_ok=cfg.tilt_ok,
+            tilt_slow=cfg.tilt_slow,
+            tilt_stop=cfg.tilt_stop,
+            settle_required=cfg.settle_required,
         )
         # Alias push_ctrl's mutable state so env references stay in sync
         self.current_K = self.push_ctrl.current_K
@@ -148,18 +133,18 @@ class PandaPushTrajectoryEnv(gym.Env):
             contact_manager=self.contact_manager,
             hand_body_id=self.hand_body_id,
             bottle_body_id=self.bottle_body_id,
-            K_min=self.K_min,
-            K_max=self.K_max,
-            max_wrist_rotation=self.max_wrist_rotation,
+            K_min=cfg.K_min,
+            K_max=cfg.K_max,
+            max_wrist_rotation=cfg.max_wrist_rotation,
         )
 
         # ==================== REWARD ====================
         self.reward_manager = RewardManager(
             path_tolerance=self.traj_manager.path_tolerance,
-            target_z=self.target_z,
+            target_z=cfg.target_z,
         )
 
-        # adaptie target_z
+        # adaptive target_z
         self.bottle_start_y = 0.2
 
         # Phase
@@ -173,16 +158,14 @@ class PandaPushTrajectoryEnv(gym.Env):
         )
 
         # Observation space
-        obs_dim = 39  # Added: lookahead_direction (2) + angle_error (1)
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(cfg.obs_dim,), dtype=np.float32
         )
 
         # State
         self.render_mode = render_mode
         self.viewer = None
         self.episode_length = 0
-        self.max_episode_length = 2500
         self.prev_progress = 0.0
 
         # Logging
@@ -195,8 +178,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         print(f"{'=' * 60}")
         print("Push direction = Blended tangent + correction to LOOKAHEAD target")
         print("Hand repositions to SIDE of bottle for correction")
-        print(f"Lookahead points: {self.lookahead_points}")
-        print(f"K range: [{self.K_min}, {self.K_max}] N/m")
+        print(f"Lookahead points: {cfg.lookahead_points}")
+        print(f"K range: [{cfg.K_min}, {cfg.K_max}] N/m")
         print(f"Goal position: {self.goal_position}")
         print(f"{'=' * 60}")
 
