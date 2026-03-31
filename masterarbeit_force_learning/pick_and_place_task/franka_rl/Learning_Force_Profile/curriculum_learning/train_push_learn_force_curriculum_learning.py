@@ -2,12 +2,12 @@ import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
-from push_with_finger_learn_force_impedance_14_v01_curriculum_learning import PandaPushTrajectoryEnv
+from masterarbeit_force_learning.pick_and_place_task.franka_rl.Learning_Force_Profile.curriculum_learning.push_with_finger_learn_force_impedance_14_v01_curriculum_learning import PandaPushTrajectoryEnv
 
 ALGORITHM = "PPO"
 TRAJECTORY_TYPE = "curriculum"
 TOTAL_TIMESTEPS = 2_000_000
-MODEL_NAME = f"push_curriculum_learning_02"
+MODEL_NAME = f"push_curriculum_learning_03"
 
 
 # ==================== CURRICULUM CALLBACK ====================
@@ -73,7 +73,7 @@ model = PPO(
 
 # --- CALLBACKS ---
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
-save_folder = os.path.join(current_script_dir, "saved_models")
+save_folder = os.path.join(current_script_dir, "../saved_models")
 os.makedirs(save_folder, exist_ok=True)
 
 checkpoint_callback = CheckpointCallback(

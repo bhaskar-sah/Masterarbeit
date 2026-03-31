@@ -35,7 +35,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Load model
         current_dir = os.path.dirname(os.path.realpath(__file__))
-        xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
+        xml_path = os.path.join(current_dir, "../robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
 
         if not os.path.exists(xml_path):
@@ -251,6 +251,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         hand_pos = self.data.xpos[self.hand_body_id]
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
         tilt = self._get_bottle_tilt()
+        is_touching = self._is_touching()
 
         # Get direction vectors
         forward_vec = self._get_forward_vector(bottle_xy)
@@ -292,6 +293,30 @@ class PandaPushTrajectoryEnv(gym.Env):
         # ==================== COMPUTE PUSH VELOCITY ====================
         v_desired = np.zeros(3)
 
+        # ==================== CONTACT LOST RECOVERY ====================
+        if not is_touching:
+            # PRIORITY: Get back to bottle!
+            bottle_direction = bottle_xy - hand_pos[:2]
+            bottle_dist = np.linalg.norm(bottle_direction)
+
+            if bottle_dist > 0.02:  # More than 2cm away from bottle
+                # Move DIRECTLY towards bottle at high speed
+                bottle_dir_normalized = bottle_direction / bottle_dist
+                recovery_speed = min(0.06, bottle_dist * 2.0)  # Up to 6cm/s
+
+                v_desired[0] = bottle_dir_normalized[0] * recovery_speed
+                v_desired[1] = bottle_dir_normalized[1] * recovery_speed
+                v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+
+                # Debug
+                if self.episode_length % 100 == 0:
+                    print(
+                        f"    CONTACT LOST! Moving to bottle: dist={bottle_dist * 100:.1f}cm, speed={recovery_speed * 100:.1f}cm/s")
+
+                return v_desired
+
+        # ==================== NORMAL PUSH (when touching) ====================
+
         # 1. FORWARD COMPONENT: Along trajectory tangent (FULL 2D!)
         forward_speed = self.base_forward_speed * (1.0 + forward_mod * 0.3) * speed_mult
         v_forward = forward_vec * forward_speed
@@ -328,17 +353,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         # 3. STAY BEHIND BOTTLE (tracking)
         target_pos = self._get_hand_target_position(bottle_xy)
         pos_error = target_pos[:2] - hand_pos[:2]
-        # v_tracking = pos_error * 4.0 # 2.5  # Increased from 2.0
-        # v_tracking = np.clip(v_tracking, -0.04, 0.04) # -0.025, 0.025  # Increased from 0.02
-
-        if not self._is_touching():
-            # Contact lost - fast recovery
-            v_tracking = pos_error * 5.0
-            v_tracking = np.clip(v_tracking, -0.05, 0.05)
-        else:
-            # Normal tracking (increased)
-            v_tracking = pos_error * 4.0
-            v_tracking = np.clip(v_tracking, -0.04, 0.04)
+        v_tracking = pos_error * 4.0 # 2.5  # Increased from 2.0
+        v_tracking = np.clip(v_tracking, -0.04, 0.04) # -0.025, 0.025  # Increased from 0.02
 
         # Combine all components (FULL 2D!)
         v_desired[0] = v_forward[0] + v_correction[0] + v_tracking[0]
@@ -739,7 +755,18 @@ class PandaPushTrajectoryEnv(gym.Env):
 
             # Contact reward (maintain contact)
             # r_contact = 0.5 if is_touching else -0.5 * dist_to_bottle
-            r_contact = 1.0 if is_touching else -2.0 * dist_to_bottle
+            # r_contact = 1.0 if is_touching else -2.0 * dist_to_bottle
+
+            # ==================== CONTACT REWARD - STRONGER ====================
+            if is_touching:
+                r_contact = 2.0  # Reward for maintaining contact
+            else:
+                # Strong penalty for losing contact
+                r_contact = -10.0 * dist_to_bottle
+
+                # Extra penalty if very far from bottle
+                if dist_to_bottle > 0.08:
+                    r_contact -= 5.0
 
             total_reward = r_progress + r_deviation + r_stability + r_contact
 
@@ -747,12 +774,13 @@ class PandaPushTrajectoryEnv(gym.Env):
             if self.episode_length % 50 == 0:
                 K_avg = np.mean(self.current_K)
                 mode = "SETTLE" if self.is_settling else "PUSH"
+                contact_status = "CONTACT" if is_touching else "NO CONTACT!"
                 wrist_deg = np.degrees(self.wrist_offset)
                 side = "LEFT" if correction_vec[0] > 0.005 else "RIGHT" if correction_vec[0] < -0.005 else "CENTER"
                 print(f"Step {self.episode_length} [{mode}]: "
                       f"prog={progress:.1%}, dev={deviation_mag:.3f}m ({side}), "
                       f"K={K_avg:.0f}, F={force_mag:.1f}N, tilt={tilt:.4f}, "
-                      f"wrist={wrist_deg:.1f}°")
+                      f"wrist={wrist_deg:.1f}°, {contact_status}")
 
         #small time penalty
         total_reward -= 0.005
@@ -779,6 +807,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         info["force_magnitude"] = force_mag
         info["bottle_tilt"] = tilt
         info["stiffness"] = np.mean(self.current_K)
+        info["trajectory_type"] = self.current_traj_type
 
         return total_reward, info
 

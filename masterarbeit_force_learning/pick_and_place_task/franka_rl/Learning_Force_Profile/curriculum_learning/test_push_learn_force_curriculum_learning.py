@@ -1,12 +1,12 @@
 import os
 import time
 from stable_baselines3 import PPO
-from push_with_finger_learn_force_impedance_14_v01_curriculum_learning import PandaPushTrajectoryEnv
+from masterarbeit_force_learning.pick_and_place_task.franka_rl.Learning_Force_Profile.curriculum_learning.push_with_finger_learn_force_impedance_14_v01_curriculum_learning import PandaPushTrajectoryEnv
 
 # ==================== CONFIGURATION ====================
-MODEL_NAME = "push_curriculum_learning_02_final.zip"  # Your curriculum-trained model
+MODEL_NAME = "push_curriculum_learning_03_final.zip"  # Your curriculum-trained model
 TEST_ALL_TRAJECTORIES = True  # NEW: Test all trajectory types
-NUM_EPISODES = 5  # Episodes per trajectory type
+NUM_EPISODES = 100000  # Episodes per trajectory type
 VISUAL_DELAY = 0.02
 
 # ==================== SETUP ====================
@@ -16,12 +16,12 @@ print("=" * 60)
 
 # ==================== LOAD MODEL ====================
 current_dir = os.path.dirname(os.path.realpath(__file__))
-model_path = os.path.join(current_dir, "saved_models", MODEL_NAME)
+model_path = os.path.join(current_dir, "../saved_models", MODEL_NAME)
 
 if not os.path.exists(model_path):
     print(f"Error: Model file not found at {model_path}")
     print("Available models in saved_models/:")
-    models_dir = os.path.join(current_dir, "saved_models")
+    models_dir = os.path.join(current_dir, "../saved_models")
     if os.path.exists(models_dir):
         for f in os.listdir(models_dir):
             if f.endswith(".zip"):
