@@ -3,7 +3,7 @@ import numpy as np
 import time
 
 # IMPORT YOUR SPECIFIC ENV FILE
-from push_learn_force_impedance_1 import PandaPushTrajectoryEnv
+from masterarbeit_force_learning.pick_and_place_task.franka_rl.Learning_Force_Profile.obsolete_files.push_learn_force_impedance_1 import PandaPushTrajectoryEnv
 
 
 def run_debug_plot():

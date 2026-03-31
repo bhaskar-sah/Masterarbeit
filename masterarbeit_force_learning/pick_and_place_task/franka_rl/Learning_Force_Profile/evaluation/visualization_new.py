@@ -13,14 +13,12 @@ Run this to debug and understand the robot's behavior!
 """
 
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from matplotlib.collections import LineCollection
 import numpy as np
 import time
-import os
 
 # CHANGE THIS TO YOUR ENVIRONMENT FILE
-from push_learn_force_impedance_7 import PandaPushTrajectoryEnv
+from masterarbeit_force_learning.pick_and_place_task.franka_rl.Learning_Force_Profile.obsolete_files.push_learn_force_impedance_7 import PandaPushTrajectoryEnv
 
 
 def run_visualization(max_steps=800, render=True, slow_motion=False):
