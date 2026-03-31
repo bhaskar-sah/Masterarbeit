@@ -27,6 +27,7 @@ from trajectory import TrajectoryManager
 from contact import ContactManager
 from push_controller import PushController
 from reward import RewardManager
+from observation import ObservationBuilder
 
 
 class PandaPushTrajectoryEnv(gym.Env):
@@ -138,6 +139,19 @@ class PandaPushTrajectoryEnv(gym.Env):
         )
         # Alias push_ctrl's mutable state so env references stay in sync
         self.current_K = self.push_ctrl.current_K
+
+        # ==================== OBSERVATION ====================
+        self.obs_builder = ObservationBuilder(
+            data=self.data,
+            traj_manager=self.traj_manager,
+            push_ctrl=self.push_ctrl,
+            contact_manager=self.contact_manager,
+            hand_body_id=self.hand_body_id,
+            bottle_body_id=self.bottle_body_id,
+            K_min=self.K_min,
+            K_max=self.K_max,
+            max_wrist_rotation=self.max_wrist_rotation,
+        )
 
         # ==================== REWARD ====================
         self.reward_manager = RewardManager(
@@ -272,69 +286,7 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_obs(self):
-        """
-        Observation includes:
-        - Robot state (qpos, qvel)
-        - Positions (hand, bottle)
-        - Push direction (to lookahead target)
-        - Deviation from trajectory
-        - Angle error θ between force and push direction
-        - Contact info
-        """
-        qpos = self.data.qpos[7:14].astype(np.float32)
-        qvel = self.data.qvel[6:13].astype(np.float32)
-        hand_pos = self.data.xpos[self.hand_body_id].astype(np.float32)
-        bottle_pos = self.data.xpos[self.bottle_body_id].astype(np.float32)
-        bottle_xy = bottle_pos[:2]
-
-        # Direction to bottle
-        hand_to_bottle = bottle_pos[:2] - hand_pos[:2]
-        dist_to_bottle = np.linalg.norm(hand_to_bottle)
-        dir_to_bottle = hand_to_bottle / (dist_to_bottle + 1e-6)
-
-        # Push direction (to lookahead target) - THE KEY OBSERVATION!
-        push_dir, dist_to_target, _ = self._get_push_direction(bottle_xy)
-
-        # Deviation from trajectory
-        deviation_vec, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
-
-        # Angle error between force and push direction
-        angle_error = self._get_angle_error(bottle_xy)
-
-        # Progress
-        progress = self.traj_manager._get_progress(bottle_xy)
-
-        # Contact
-        contact_force = self._get_contact_force()
-        is_touching = np.array([1.0 if self._is_touching() else 0.0], dtype=np.float32)
-
-        # Stiffness
-        K_normalized = (self.current_K - self.K_min) / (self.K_max - self.K_min)
-        settling_flag = np.array([1.0 if self.push_ctrl.is_settling else 0.0], dtype=np.float32)
-
-        wrist_normalized = np.array([self.wrist_offset / self.max_wrist_rotation], dtype=np.float32)
-
-        obs = np.concatenate([
-            qpos,  # 7
-            qvel,  # 7
-            hand_pos,  # 3
-            bottle_pos,  # 3
-            dir_to_bottle,  # 2
-            [dist_to_bottle],  # 1
-            push_dir,  # 2  (NEW: direction to lookahead target)
-            [dist_to_target],  # 1  (NEW: distance to lookahead target)
-            deviation_vec,  # 2
-            [deviation_mag],  # 1
-            [angle_error],  # 1  (NEW: angle θ between force and push dir)
-            [progress],  # 1
-            contact_force,  # 3
-            is_touching,  # 1
-            K_normalized,  # 2
-            settling_flag,  # 1
-            wrist_normalized, #1
-        ])  # Total: 39
-
-        return obs.astype(np.float32)
+        return self.obs_builder.get_obs(self.current_K, self.wrist_offset)
 
     # ==================================================================
     #                      REWARD
