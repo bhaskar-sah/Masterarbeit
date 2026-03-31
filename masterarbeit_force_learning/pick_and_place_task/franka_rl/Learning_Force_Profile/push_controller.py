@@ -45,7 +45,8 @@ class PushController:
         self.settle_required = settle_required
 
         self.current_K = np.array([300.0, 300.0])
-        self.angle_error_log = []
+        self.wrist_offset = 0.0
+        self.logger = None  # set by env after construction
 
     # ==================================================================
     #           LOOKAHEAD TARGET + BLENDED DIRECTION
@@ -260,7 +261,8 @@ class PushController:
 
         # ==================== LOGGING ====================
         angle_error = self.get_angle_error(bottle_xy)
-        self.angle_error_log.append(angle_error)
+        if self.logger is not None:
+            self.logger.log_angle_error(angle_error)
 
         if episode_length % 100 == 0:
             _, dev_mag = self.traj_manager._get_path_deviation(bottle_xy)
@@ -287,6 +289,18 @@ class PushController:
         tilt = self.get_bottle_tilt()
         angvel = np.linalg.norm(self.data.qvel[3:6])
         return tilt > 0.97 and angvel < 0.1
+
+    def compute_wrist_joint_target(self, target_wrist_rotation, base_wrist_pos,
+                                   max_wrist_rotation, act_low_6, act_high_6, dt):
+        """
+        Update wrist_offset toward target_wrist_rotation and return the
+        clamped joint position target for the wrist (joint 6).
+        """
+        wrist_error = target_wrist_rotation - self.wrist_offset
+        wrist_speed = np.clip(5.0 * wrist_error, -2.0, 2.0)
+        self.wrist_offset += wrist_speed * dt
+        self.wrist_offset = np.clip(self.wrist_offset, -max_wrist_rotation, max_wrist_rotation)
+        return float(np.clip(base_wrist_pos + self.wrist_offset, act_low_6, act_high_6))
 
     def cartesian_to_joint_velocity(self, cart_vel):
         """Convert Cartesian velocity to joint velocities using Jacobian."""

@@ -19,7 +19,6 @@ Updates:
 import gymnasium as gym
 from gymnasium import spaces
 import mujoco
-import mujoco.viewer
 import numpy as np
 import os
 
@@ -29,6 +28,8 @@ from contact import ContactManager
 from push_controller import PushController
 from reward import RewardManager
 from observation import ObservationBuilder
+from logger import EpisodeLogger
+from renderer import TrajectoryRenderer
 
 
 class PandaPushTrajectoryEnv(gym.Env):
@@ -84,8 +85,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.max_wrist_rotation = cfg.max_wrist_rotation
         self.max_episode_length = cfg.max_episode_length
 
-        # Wrist state
-        self.wrist_offset = 0.0
+        # base_wrist_pos is set in reset() from the home keyframe joint position
         self.base_wrist_pos = 0.0
 
         # ==================== CONTACT ====================
@@ -124,6 +124,10 @@ class PandaPushTrajectoryEnv(gym.Env):
         )
         # Alias push_ctrl's mutable state so env references stay in sync
         self.current_K = self.push_ctrl.current_K
+
+        # Logging
+        self.logger = EpisodeLogger()
+        self.push_ctrl.logger = self.logger  # push_ctrl logs angle errors via shared logger
 
         # ==================== OBSERVATION ====================
         self.obs_builder = ObservationBuilder(
@@ -164,14 +168,9 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # State
         self.render_mode = render_mode
-        self.viewer = None
+        self.renderer = TrajectoryRenderer(self.model, self.data, render_mode)
         self.episode_length = 0
         self.prev_progress = 0.0
-
-        # Logging
-        self.force_profile_log = []
-        self.stiffness_profile_log = []
-        self.deviation_log = []
 
         print(f"\n{'=' * 60}")
         print("LOOKAHEAD TARGET CONCEPT (SUPERVISOR'S METHOD)")
@@ -269,7 +268,7 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_obs(self):
-        return self.obs_builder.get_obs(self.current_K, self.wrist_offset)
+        return self.obs_builder.get_obs(self.current_K, self.push_ctrl.wrist_offset)
 
     # ==================================================================
     #                      REWARD
@@ -342,12 +341,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.prev_progress = self.reward_manager.prev_progress
 
         self.base_wrist_pos = self.current_qpos_target[6]
-        self.wrist_offset = 0.0
+        self.push_ctrl.wrist_offset = 0.0
 
-        self.force_profile_log = []
-        self.stiffness_profile_log = []
-        self.deviation_log = []
-        self.push_ctrl.angle_error_log = []
+        self.logger.reset()
 
         print(f"\n{'=' * 50}")
         print(f"EPISODE: {traj_type}")
@@ -382,17 +378,9 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.act_low[:6], self.act_high[:6]
         )
 
-        wrist_error = target_wrist_rotation - self.wrist_offset
-        wrist_speed = 5.0 * wrist_error # before 2.0
-        # wrist_speed = np.clip(wrist_speed, -0.5, 0.5)
-        wrist_speed = np.clip(wrist_speed, -2.0, 2.0)
-
-        self.wrist_offset += wrist_speed * dt
-        self.wrist_offset = np.clip(self.wrist_offset, -self.max_wrist_rotation, self.max_wrist_rotation)
-
-        self.current_qpos_target[6] = np.clip(
-            self.base_wrist_pos + self.wrist_offset,
-            self.act_low[6], self.act_high[6]
+        self.current_qpos_target[6] = self.push_ctrl.compute_wrist_joint_target(
+            target_wrist_rotation, self.base_wrist_pos,
+            self.max_wrist_rotation, self.act_low[6], self.act_high[6], dt
         )
 
         self.data.ctrl[:7] = self.current_qpos_target
@@ -405,9 +393,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
         _, dev = self.traj_manager._get_path_deviation(bottle_xy)
 
-        self.force_profile_log.append(force.copy())
-        self.stiffness_profile_log.append(self.current_K.copy())
-        self.deviation_log.append(dev)
+        self.logger.log_step(force, self.current_K, dev)
 
         obs = self._get_obs()
         reward, info = self._get_reward()
@@ -419,42 +405,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def render(self):
-        if self.render_mode == "human":
-            if self.viewer is None:
-                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
-                # Install the custom drawing callback
-                self.viewer.user_scn.ngeom = 0  # reset custom geoms
-
-            # Draw trajectory
-            if self.traj_manager.trajectory is not None:
-                self.viewer.user_scn.ngeom = 0  # clear previous frame's geoms
-                for i in range(len(self.traj_manager.trajectory) - 1):
-                    if self.viewer.user_scn.ngeom >= self.viewer.user_scn.maxgeom:
-                        break
-
-                    p1 = np.array([self.traj_manager.trajectory[i][0], self.traj_manager.trajectory[i][1], 0.801])
-                    p2 = np.array([self.traj_manager.trajectory[i + 1][0], self.traj_manager.trajectory[i + 1][1], 0.801])
-
-                    mujoco.mjv_initGeom(
-                        self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom],
-                        type=mujoco.mjtGeom.mjGEOM_CAPSULE,
-                        size=[0.003, 0, 0],  # radius
-                        pos=(p1 + p2) / 2,
-                        mat=np.eye(3).flatten(),
-                        rgba=np.array([1.0, 0.0, 0.0, 0.8], dtype=np.float32)
-                    )
-                    # Orient capsule from p1 to p2
-                    mujoco.mjv_connector(
-                        self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom],
-                        mujoco.mjtGeom.mjGEOM_CAPSULE,
-                        0.003,  # width
-                        p1, p2
-                    )
-                    self.viewer.user_scn.ngeom += 1
-
-            self.viewer.sync()
+        self.renderer.render(self.traj_manager.trajectory)
 
     def close(self):
-        if self.viewer:
-            self.viewer.close()
-            self.viewer = None
+        self.renderer.close()
