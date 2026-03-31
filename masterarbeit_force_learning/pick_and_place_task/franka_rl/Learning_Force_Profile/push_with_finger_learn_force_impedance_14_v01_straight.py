@@ -24,6 +24,7 @@ import numpy as np
 import os
 
 from trajectory import TrajectoryManager
+from contact import ContactManager
 
 
 class PandaPushTrajectoryEnv(gym.Env):
@@ -102,6 +103,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.target_z = 0.92
         self.z_gain = 10.0
         self.damping = 0.01
+
+        # ==================== CONTACT ====================
+        self.contact_manager = ContactManager(self.model, self.data, self.robot_contact_bodies, self.bottle_body_id)
 
         # ==================== TRAJECTORY ====================
         self.traj_manager = TrajectoryManager(goal_position=np.array([0.4, -0.2]), path_tolerance=0.05)
@@ -483,33 +487,10 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_contact_force(self):
-        """Get contact force between robot and bottle."""
-        total_force = np.zeros(3, dtype=np.float32)
-        for i in range(self.data.ncon):
-            contact = self.data.contact[i]
-            body1 = self.model.geom_bodyid[contact.geom1]
-            body2 = self.model.geom_bodyid[contact.geom2]
-            robot_touch = body1 in self.robot_contact_bodies or body2 in self.robot_contact_bodies
-            bottle_touch = body1 == self.bottle_body_id or body2 == self.bottle_body_id
-            if robot_touch and bottle_touch:
-                c_force = np.zeros(6)
-                mujoco.mj_contactForce(self.model, self.data, i, c_force)
-                frame = contact.frame.reshape(3, 3)
-                force_world = frame.T @ c_force[:3]
-                total_force += force_world.astype(np.float32)
-        return total_force
+        return self.contact_manager.get_contact_force()
 
     def _is_touching(self):
-        """Check if robot is touching bottle."""
-        for i in range(self.data.ncon):
-            contact = self.data.contact[i]
-            body1 = self.model.geom_bodyid[contact.geom1]
-            body2 = self.model.geom_bodyid[contact.geom2]
-            robot_touch = body1 in self.robot_contact_bodies or body2 in self.robot_contact_bodies
-            bottle_touch = body1 == self.bottle_body_id or body2 == self.bottle_body_id
-            if robot_touch and bottle_touch:
-                return True
-        return False
+        return self.contact_manager.is_touching()
 
     # ==================================================================
     #                      OBSERVATION
