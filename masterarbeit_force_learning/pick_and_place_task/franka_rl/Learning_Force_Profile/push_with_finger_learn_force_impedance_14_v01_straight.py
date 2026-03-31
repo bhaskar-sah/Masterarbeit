@@ -26,6 +26,7 @@ import os
 from trajectory import TrajectoryManager
 from contact import ContactManager
 from push_controller import PushController
+from reward import RewardManager
 
 
 class PandaPushTrajectoryEnv(gym.Env):
@@ -137,6 +138,12 @@ class PandaPushTrajectoryEnv(gym.Env):
         )
         # Alias push_ctrl's mutable state so env references stay in sync
         self.current_K = self.push_ctrl.current_K
+
+        # ==================== REWARD ====================
+        self.reward_manager = RewardManager(
+            path_tolerance=self.traj_manager.path_tolerance,
+            target_z=self.target_z,
+        )
 
         # adaptie target_z
         self.bottle_start_y = 0.2
@@ -334,122 +341,34 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_reward(self):
-        """
-        Reward function:
-        - Progress along trajectory
-        - Low deviation from trajectory
-        - Small angle error θ (force aligned with push direction)
-        - Maintain contact
-        - Keep bottle upright
-        """
-        info = {"is_success": False}
-
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
         hand_pos = self.data.xpos[self.hand_body_id]
 
-        # Get metrics
         _, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
         progress = self.traj_manager._get_progress(bottle_xy)
         tilt = self._get_bottle_tilt()
         is_touching = self._is_touching()
-        force = self._get_contact_force()
-        force_mag = np.linalg.norm(force)
+        force_mag = np.linalg.norm(self._get_contact_force())
         dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_xy)
         angle_error = self._get_angle_error(bottle_xy)
 
-        if self.in_approach:
-            # Approach phase
-            total_reward = -2.0 * dist_to_bottle
-            total_reward += -5.0 * abs(hand_pos[2] - self.target_z)
-            if is_touching or dist_to_bottle < 0.06:
-                total_reward += 10.0
-                self.in_approach = False
-
-            if self.episode_length % 50 == 0:
-                print(f"Step {self.episode_length} [APPROACH]: dist={dist_to_bottle:.3f}m")
-        else:
-            # Push phase
-
-            # 1. Progress reward
-            progress_delta = progress - self.prev_progress
-            r_progress = 100.0 * max(progress_delta, 0)
-
-            # 2. Deviation reward (stay on trajectory)
-            max_dev_reward = 5.0
-            dev_slope = 100.0
-            r_deviation = max_dev_reward - dev_slope * deviation_mag
-            r_deviation = max(r_deviation, -15.0)
-
-            # 3. Angle error reward (NEW: minimize θ)
-            # Small angle = good, large angle = bad
-            angle_deg = np.degrees(angle_error)
-            if angle_deg < 10:
-                r_angle = 2.0  # Well aligned
-            elif angle_deg < 30:
-                r_angle = 1.0  # Acceptable
-            elif angle_deg < 60:
-                r_angle = 0.0  # Needs improvement
-            else:
-                r_angle = -2.0  # Poorly aligned
-
-            # 4. Stability reward
-            if tilt > 0.995:
-                r_stability = 3.0
-            elif tilt > 0.99:
-                r_stability = 1.0
-            elif tilt > 0.98:
-                r_stability = 0.0
-            else:
-                r_stability = -15.0 * (1 - tilt)
-
-            # 5. Contact reward (STRONGER)
-            if is_touching:
-                r_contact = 2.0
-            else:
-                r_contact = -10.0 * dist_to_bottle
-                if dist_to_bottle > 0.08:
-                    r_contact -= 5.0
-
-            total_reward = r_progress + r_deviation + r_angle + r_stability + r_contact
-
-            # Print status
-            if self.episode_length % 50 == 0:
-                K_avg = np.mean(self.current_K)
-                mode = "SETTLE" if self.push_ctrl.is_settling else "PUSH"
-                contact_status = "CONTACT" if is_touching else "NO CONTACT!"
-                print(f"Step {self.episode_length} [{mode}]: "
-                      f"prog={progress:.1%}, dev={deviation_mag * 100:.1f}cm, "
-                      f"θ={angle_deg:.1f}°, K={K_avg:.0f}, F={force_mag:.1f}N, "
-                      f"tilt={tilt:.4f}, {contact_status}")
-
-        # Time penalty
-        total_reward -= 0.005
-
-        # Success
-        if progress > 0.95 and deviation_mag < self.traj_manager.path_tolerance:
-            total_reward += 100.0
-            info["is_success"] = True
-            print(f"SUCCESS at step {self.episode_length}!")
-
-        # Failures
-        if tilt < 0.5:
-            total_reward -= 100.0
-            info["bottle_fallen"] = True
-
-        if deviation_mag > 0.15:
-            total_reward -= 50.0
-            info["off_path"] = True
-
-        self.prev_progress = progress
-
-        info["progress"] = progress
-        info["deviation"] = deviation_mag
-        info["angle_error"] = angle_error
-        info["force_magnitude"] = force_mag
-        info["bottle_tilt"] = tilt
-        info["stiffness"] = np.mean(self.current_K)
-
-        return total_reward, info
+        # sync in_approach back to env after reward_manager may flip it
+        result = self.reward_manager.compute(
+            deviation_mag=deviation_mag,
+            progress=progress,
+            tilt=tilt,
+            is_touching=is_touching,
+            force_mag=force_mag,
+            dist_to_bottle=dist_to_bottle,
+            angle_error=angle_error,
+            hand_z=hand_pos[2],
+            K_avg=float(np.mean(self.current_K)),
+            is_settling=self.push_ctrl.is_settling,
+            episode_length=self.episode_length,
+        )
+        self.in_approach = self.reward_manager.in_approach
+        self.prev_progress = self.reward_manager.prev_progress
+        return result
 
     # ==================================================================
     #                      RESET / STEP
@@ -479,12 +398,13 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         self.traj_manager.generate_trajectory(bottle_start[:2], traj_type)
 
-        self.prev_progress = 0.0
-        self.in_approach = True
         self.episode_length = 0
         self.push_ctrl.current_K[:] = [200.0, 200.0]
         self.push_ctrl.is_settling = False
         self.push_ctrl.settle_counter = 0
+        self.reward_manager.reset()
+        self.in_approach = self.reward_manager.in_approach
+        self.prev_progress = self.reward_manager.prev_progress
 
         self.base_wrist_pos = self.current_qpos_target[6]
         self.wrist_offset = 0.0
