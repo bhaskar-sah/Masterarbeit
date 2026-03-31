@@ -109,6 +109,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.goal_position = np.array([0.4, -0.2])
         # self.goal_position = np.array([0.4, -0.4])
 
+        # adaptie target_z
+        self.bottle_start_y = 0.2
+
         # Phase
         self.in_approach = True
 
@@ -306,6 +309,13 @@ class PandaPushTrajectoryEnv(gym.Env):
         tilt = self._get_bottle_tilt()
         is_touching = self._is_touching()
 
+        # adaptive target-z
+        # Adaptive height - compensate for arm droop at full extension
+        bottle_y = self.data.xpos[self.bottle_body_id][1]
+        distance_from_start = abs(bottle_y - self.bottle_start_y)
+        current_target_z = self.target_z + 0.02 * distance_from_start
+        current_target_z = max(current_target_z, 0.88)
+
         # Parse action
         forward_mod = action[0]
         self.current_K[0] = self.K_min + action[2] * (self.K_max - self.K_min)
@@ -325,7 +335,8 @@ class PandaPushTrajectoryEnv(gym.Env):
 
             if self.is_settling:
                 v_desired = np.zeros(3)
-                v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+                # v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+                v_desired[2] = self.z_gain * (current_target_z - hand_pos[2])
                 return v_desired
 
         if tilt < self.tilt_stop:
@@ -353,7 +364,8 @@ class PandaPushTrajectoryEnv(gym.Env):
 
                 v_desired[0] = bottle_dir_normalized[0] * recovery_speed
                 v_desired[1] = bottle_dir_normalized[1] * recovery_speed
-                v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+                # v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+                v_desired[2] = self.z_gain * (current_target_z - hand_pos[2])
 
                 if self.episode_length % 50 == 0:
                     print(f"    CONTACT LOST! Recovery: dist={bottle_dist * 100:.1f}cm")
@@ -390,7 +402,8 @@ class PandaPushTrajectoryEnv(gym.Env):
             v_desired[:2] = v_desired[:2] / v_mag * 0.05
 
         # Height control
-        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+        # v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
+        v_desired[2] = self.z_gain * (current_target_z - hand_pos[2])
 
         # ==================== LOGGING ====================
         angle_error = self._get_angle_error(bottle_xy)
@@ -465,79 +478,7 @@ class PandaPushTrajectoryEnv(gym.Env):
     #                      TRAJECTORY
     # ==================================================================
 
-    def _generate_trajectory(self, bottle_start_xy, traj_type):
-        """Generate trajectory from bottle start position to fixed goal."""
-        start = bottle_start_xy.copy()
-        n_points = 50
-        goal = self.goal_position.copy()
 
-        if traj_type == "straight":
-            t = np.linspace(0, 1, n_points)
-            traj = np.outer(1 - t, start) + np.outer(t, goal)
-            return traj.astype(np.float32)
-
-        elif traj_type == "curved":
-            t = np.linspace(0, 1, n_points)
-            mid_point = np.array([0.55, 0.0])
-            x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * mid_point[0] + t ** 2 * goal[0]
-            y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * mid_point[1] + t ** 2 * goal[1]
-            return np.stack([x, y], axis=1).astype(np.float32)
-
-        elif traj_type == "s_curve":
-            t = np.linspace(0, 1, n_points)
-            wiggle_strength = np.sin(np.pi * t)  # Peaks at middle, zero at ends
-            # x = start[0] + 0.08 * np.sin(2 * np.pi * t) * wiggle_strength
-            x = start[0] + 0.04 * np.sin(2 * np.pi * t) * wiggle_strength
-            y = start[1] + t * (goal[1] - start[1])
-            return np.stack([x, y], axis=1).astype(np.float32)
-
-        else:
-            t = np.linspace(0, 1, n_points)
-            traj = np.outer(1 - t, start) + np.outer(t, goal)
-            return traj.astype(np.float32)
-
-    def _compute_arc_length(self):
-        """Compute total arc length of trajectory."""
-        if self.trajectory is None or len(self.trajectory) < 2:
-            self.total_arc_length = 0.0
-            return
-        diffs = np.diff(self.trajectory, axis=0)
-        self.total_arc_length = np.sum(np.linalg.norm(diffs, axis=1))
-
-    def _get_closest_point_on_trajectory(self, pos_xy):
-        """Find closest point on trajectory to given position."""
-        if self.trajectory is None:
-            return 0, pos_xy.copy(), 0.0
-        distances = np.linalg.norm(self.trajectory - pos_xy, axis=1)
-        idx = np.argmin(distances)
-        closest_pt = self.trajectory[idx].copy()
-        arc_len = np.sum(np.linalg.norm(np.diff(self.trajectory[:idx + 1], axis=0), axis=1)) if idx > 0 else 0.0
-        return idx, closest_pt, arc_len
-
-    def _get_path_deviation(self, bottle_xy):
-        """Get deviation vector from bottle to trajectory."""
-        _, closest_pt, _ = self._get_closest_point_on_trajectory(bottle_xy)
-        deviation_vec = closest_pt - bottle_xy
-        return deviation_vec.astype(np.float32), float(np.linalg.norm(deviation_vec))
-
-    def _get_path_tangent(self, bottle_xy):
-        """Get tangent vector at bottle's closest point on trajectory."""
-        if self.trajectory is None or len(self.trajectory) < 2:
-            return np.array([0.0, -1.0], dtype=np.float32)
-        idx, _, _ = self._get_closest_point_on_trajectory(bottle_xy)
-        if idx < len(self.trajectory) - 1:
-            tangent = self.trajectory[idx + 1] - self.trajectory[idx]
-        else:
-            tangent = self.trajectory[idx] - self.trajectory[idx - 1]
-        norm = np.linalg.norm(tangent)
-        return (tangent / norm).astype(np.float32) if norm > 1e-6 else np.array([0.0, -1.0], dtype=np.float32)
-
-    def _get_progress(self, bottle_xy):
-        """Get progress along trajectory (0.0 = start, 1.0 = goal)."""
-        if self.total_arc_length < 1e-6:
-            return 0.0
-        _, _, arc_len = self._get_closest_point_on_trajectory(bottle_xy)
-        return float(np.clip(arc_len / self.total_arc_length, 0.0, 1.0))
 
     # ==================================================================
     #                      CONTACT
@@ -781,6 +722,9 @@ class PandaPushTrajectoryEnv(gym.Env):
             mujoco.mj_step(self.model, self.data)
 
         bottle_start = self.data.xpos[self.bottle_body_id].copy()
+
+        # adaptive target-z
+        self.bottle_start_y = bottle_start[1]
 
         traj_type = self.trajectory_type
         if options and "trajectory_type" in options:
