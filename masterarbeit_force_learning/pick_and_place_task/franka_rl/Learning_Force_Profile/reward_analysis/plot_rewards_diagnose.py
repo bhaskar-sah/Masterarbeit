@@ -59,6 +59,7 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
     done = False
     step = 0
     prev_progress = 0.0
+    prev_action = np.zeros(env.action_space.shape, dtype=np.float32)  # ADD THIS
 
     while not done:
         action, _ = model.predict(obs, deterministic=True)
@@ -98,6 +99,7 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
             r_angle = 0.0
             r_stability = 0.0
             r_contact = 0.0
+            r_smooth = 0.0
             r_total = -2.0 * dist_to_bottle - 5.0 * abs(hand_pos[2] - env.target_z)
         else:
             # Progress
@@ -109,14 +111,17 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
             r_deviation = max(r_deviation, -15.0)
 
             # Angle
-            if angle_deg < 10:
-                r_angle = 2.0
-            elif angle_deg < 30:
-                r_angle = 1.0
-            elif angle_deg < 60:
-                r_angle = 0.0
-            else:
-                r_angle = -2.0
+            # if angle_deg < 10:
+            #     r_angle = 2.0
+            # elif angle_deg < 30:
+            #     r_angle = 1.0
+            # elif angle_deg < 60:
+            #     r_angle = 0.0
+            # else:
+            #     r_angle = -2.0
+
+            # Angle (NEW CONTINUOUS LOGIC)
+            r_angle = float(np.clip(2.0 - (angle_deg / 15.0), -2.0, 2.0))
 
             # Stability
             if tilt > 0.995:
@@ -137,9 +142,15 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
                 if dist_to_bottle > 0.08:
                     r_contact -= 5.0
 
-            r_total = r_progress + r_deviation + r_angle + r_stability + r_contact - 0.005
+            # Action Smoothing (NEW LOGIC)
+            k_delta = np.linalg.norm(action[2:4] - prev_action[2:4])
+            r_smooth = -0.5 * k_delta  # NOTE: Match this multiplier to whatever you used in the env!
+
+            # Total
+            r_total = r_progress + r_deviation + r_angle + r_stability + r_contact + r_smooth - 0.005
 
         prev_progress = progress
+        prev_action = action.copy()
 
         # Log everything
         logs["step"].append(step)
@@ -190,7 +201,7 @@ def plot_rewards(logs, trajectory, info, save_path=None):
 
     # ==================== 1. Individual Reward Components ====================
     ax1 = fig.add_subplot(gs[0, :])
-    ax1.plot(steps, logs["r_progress"], label="r_progress", alpha=0.8, linewidth=1)
+    ax1.plot(steps, logs["r_progress"], label="r_progress", color="#2ca02c", alpha=0.8, linewidth=1)
     ax1.plot(steps, logs["r_deviation"], label="r_deviation", alpha=0.8, linewidth=1)
     ax1.plot(steps, logs["r_angle"], label="r_angle", alpha=0.8, linewidth=1)
     ax1.plot(steps, logs["r_stability"], label="r_stability", alpha=0.8, linewidth=1)
@@ -338,7 +349,8 @@ def main():
         sys.path.insert(0, args.env_path)
 
     from stable_baselines3 import PPO
-    from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
+    # from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
+    from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction import PandaPushTrajectoryEnv
 
     # Create environment (no rendering for data collection)
     env = PandaPushTrajectoryEnv(render_mode=None, trajectory_type=args.trajectory_type)
