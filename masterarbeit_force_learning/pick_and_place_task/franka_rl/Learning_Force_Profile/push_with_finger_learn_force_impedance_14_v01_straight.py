@@ -23,6 +23,8 @@ import mujoco.viewer
 import numpy as np
 import os
 
+from trajectory import TrajectoryManager
+
 
 class PandaPushTrajectoryEnv(gym.Env):
     """
@@ -102,12 +104,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.damping = 0.01
 
         # ==================== TRAJECTORY ====================
-        self.trajectory_type = trajectory_type
-        self.trajectory = None
-        self.total_arc_length = 0.0
-        self.path_tolerance = 0.05
-        self.goal_position = np.array([0.4, -0.2])
-        # self.goal_position = np.array([0.4, -0.4])
+        self.traj_manager = TrajectoryManager(goal_position=np.array([0.4, -0.2]), path_tolerance=0.05)
+        self.goal_position = self.traj_manager.goal_position
 
         # adaptie target_z
         self.bottle_start_y = 0.2
@@ -162,19 +160,19 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         Returns: target_point (2D), target_index
         """
-        if self.trajectory is None or len(self.trajectory) < 2:
+        if self.traj_manager.trajectory is None or len(self.traj_manager.trajectory) < 2:
             return self.goal_position.copy(), 0
 
         # Find bottle's closest point on trajectory
-        idx, _, _ = self._get_closest_point_on_trajectory(bottle_xy)
+        idx, _, _ = self.traj_manager._get_closest_point_on_trajectory(bottle_xy)
 
         # Look ahead by lookahead_points
-        target_idx = min(idx + self.lookahead_points, len(self.trajectory) - 1)
-        target_point = self.trajectory[target_idx].copy()
+        target_idx = min(idx + self.lookahead_points, len(self.traj_manager.trajectory) - 1)
+        target_point = self.traj_manager.trajectory[target_idx].copy()
 
         # Near end of trajectory: use goal directly as target
         # this ensures correction still works even at the end
-        if target_idx >= len(self.trajectory) - 2:
+        if target_idx >= len(self.traj_manager.trajectory) - 2:
             target_point = self.goal_position.copy()
 
         return target_point, target_idx
@@ -189,7 +187,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         Returns: (push_direction, distance_to_target, target_point)
         """
         target_point, _ = self._get_lookahead_target(bottle_xy)
-        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        deviation_vec, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
 
         # Vector from bottle to target
         to_target = target_point - bottle_xy
@@ -199,10 +197,10 @@ class PandaPushTrajectoryEnv(gym.Env):
             correction_dir = to_target / distance
         else:
             # Already at target, use tangent
-            correction_dir = self._get_path_tangent(bottle_xy)
+            correction_dir = self.traj_manager._get_path_tangent(bottle_xy)
 
         # pure tangent direction
-        tangent_dir = self._get_path_tangent(bottle_xy)
+        tangent_dir = self.traj_manager._get_path_tangent(bottle_xy)
 
         # Blend factor: 0 = pure tangent, 1 = full correction
         # Below 0.5cm: mostly tangent (just push forward)
@@ -256,7 +254,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         Returns: 3D target position [x, y, z] for hand
         """
         push_dir, _, _ = self._get_push_direction(bottle_xy)
-        # deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        # deviation_vec, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
 
         # Base position: behind bottle along push direction
         hand_xy = bottle_xy - push_dir * self.behind_distance
@@ -411,10 +409,10 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Debug output
         if self.episode_length % 100 == 0:
-            _, dev_mag = self._get_path_deviation(bottle_xy)
+            _, dev_mag = self.traj_manager._get_path_deviation(bottle_xy)
             _, target_idx = self._get_lookahead_target(bottle_xy)
             angle_deg = np.degrees(angle_error)
-            _, deviation_mag = self._get_path_deviation(bottle_xy)
+            _, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
             blend = np.clip((deviation_mag - 0.005) / 0.02, 0.0, 1.0)
             print(f"    Lookahead: idx={target_idx}, push_dir=[{push_dir[0]:.2f}, {push_dir[1]:.2f}], "
                   f"θ={angle_deg:.1f}°, dev={dev_mag * 100:.1f}cm, blend={blend:.2f}")
@@ -542,13 +540,13 @@ class PandaPushTrajectoryEnv(gym.Env):
         push_dir, dist_to_target, _ = self._get_push_direction(bottle_xy)
 
         # Deviation from trajectory
-        deviation_vec, deviation_mag = self._get_path_deviation(bottle_xy)
+        deviation_vec, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
 
         # Angle error between force and push direction
         angle_error = self._get_angle_error(bottle_xy)
 
         # Progress
-        progress = self._get_progress(bottle_xy)
+        progress = self.traj_manager._get_progress(bottle_xy)
 
         # Contact
         contact_force = self._get_contact_force()
@@ -601,8 +599,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         hand_pos = self.data.xpos[self.hand_body_id]
 
         # Get metrics
-        _, deviation_mag = self._get_path_deviation(bottle_xy)
-        progress = self._get_progress(bottle_xy)
+        _, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
+        progress = self.traj_manager._get_progress(bottle_xy)
         tilt = self._get_bottle_tilt()
         is_touching = self._is_touching()
         force = self._get_contact_force()
@@ -679,7 +677,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         total_reward -= 0.005
 
         # Success
-        if progress > 0.95 and deviation_mag < self.path_tolerance:
+        if progress > 0.95 and deviation_mag < self.traj_manager.path_tolerance:
             total_reward += 100.0
             info["is_success"] = True
             print(f"SUCCESS at step {self.episode_length}!")
@@ -726,12 +724,11 @@ class PandaPushTrajectoryEnv(gym.Env):
         # adaptive target-z
         self.bottle_start_y = bottle_start[1]
 
-        traj_type = self.trajectory_type
+        traj_type = self.traj_manager.trajectory_type
         if options and "trajectory_type" in options:
             traj_type = options["trajectory_type"]
 
-        self.trajectory = self._generate_trajectory(bottle_start[:2], traj_type)
-        self._compute_arc_length()
+        self.traj_manager.generate_trajectory(bottle_start[:2], traj_type)
 
         self.prev_progress = 0.0
         self.in_approach = True
@@ -752,7 +749,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         print(f"EPISODE: {traj_type}")
         print(f"Bottle start: ({bottle_start[0]:.2f}, {bottle_start[1]:.2f})")
         print(f"Goal: ({self.goal_position[0]:.2f}, {self.goal_position[1]:.2f})")
-        print(f"Trajectory arc length: {self.total_arc_length:.3f}m")
+        print(f"Trajectory arc length: {self.traj_manager.total_arc_length:.3f}m")
         print(f"Lookahead points: {self.lookahead_points}")
         print(f"{'=' * 50}")
 
@@ -802,7 +799,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Logging
         force = self._get_contact_force()
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-        _, dev = self._get_path_deviation(bottle_xy)
+        _, dev = self.traj_manager._get_path_deviation(bottle_xy)
 
         self.force_profile_log.append(force.copy())
         self.stiffness_profile_log.append(self.current_K.copy())
@@ -825,14 +822,14 @@ class PandaPushTrajectoryEnv(gym.Env):
                 self.viewer.user_scn.ngeom = 0  # reset custom geoms
 
             # Draw trajectory
-            if self.trajectory is not None:
+            if self.traj_manager.trajectory is not None:
                 self.viewer.user_scn.ngeom = 0  # clear previous frame's geoms
-                for i in range(len(self.trajectory) - 1):
+                for i in range(len(self.traj_manager.trajectory) - 1):
                     if self.viewer.user_scn.ngeom >= self.viewer.user_scn.maxgeom:
                         break
 
-                    p1 = np.array([self.trajectory[i][0], self.trajectory[i][1], 0.801])
-                    p2 = np.array([self.trajectory[i + 1][0], self.trajectory[i + 1][1], 0.801])
+                    p1 = np.array([self.traj_manager.trajectory[i][0], self.traj_manager.trajectory[i][1], 0.801])
+                    p2 = np.array([self.traj_manager.trajectory[i + 1][0], self.traj_manager.trajectory[i + 1][1], 0.801])
 
                     mujoco.mjv_initGeom(
                         self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom],
