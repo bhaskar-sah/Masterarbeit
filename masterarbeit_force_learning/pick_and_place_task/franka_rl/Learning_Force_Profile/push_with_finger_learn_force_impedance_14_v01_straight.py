@@ -25,6 +25,7 @@ import os
 
 from trajectory import TrajectoryManager
 from contact import ContactManager
+from push_controller import PushController
 
 
 class PandaPushTrajectoryEnv(gym.Env):
@@ -95,8 +96,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.tilt_slow = 0.98
         self.tilt_stop = 0.96
 
-        self.is_settling = False
-        self.settle_counter = 0
+        # is_settling and settle_counter are owned by push_ctrl
         self.settle_required = 25
 
         # ==================== CARTESIAN CONTROL ====================
@@ -110,6 +110,33 @@ class PandaPushTrajectoryEnv(gym.Env):
         # ==================== TRAJECTORY ====================
         self.traj_manager = TrajectoryManager(goal_position=np.array([0.4, -0.2]), path_tolerance=0.05)
         self.goal_position = self.traj_manager.goal_position
+
+        # ==================== PUSH CONTROLLER ====================
+        # Note: current_K and is_settling are owned by push_ctrl.
+        # The env references below are aliases so all existing code keeps working.
+        self.push_ctrl = PushController(
+            model=self.model,
+            data=self.data,
+            traj_manager=self.traj_manager,
+            contact_manager=self.contact_manager,
+            hand_body_id=self.hand_body_id,
+            bottle_body_id=self.bottle_body_id,
+            goal_position=self.goal_position,
+            lookahead_points=self.lookahead_points,
+            base_forward_speed=self.base_forward_speed,
+            behind_distance=self.behind_distance,
+            target_z=self.target_z,
+            z_gain=self.z_gain,
+            damping=self.damping,
+            K_min=self.K_min,
+            K_max=self.K_max,
+            tilt_ok=self.tilt_ok,
+            tilt_slow=self.tilt_slow,
+            tilt_stop=self.tilt_stop,
+            settle_required=self.settle_required,
+        )
+        # Alias push_ctrl's mutable state so env references stay in sync
+        self.current_K = self.push_ctrl.current_K
 
         # adaptie target_z
         self.bottle_start_y = 0.2
@@ -141,7 +168,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.force_profile_log = []
         self.stiffness_profile_log = []
         self.deviation_log = []
-        self.angle_error_log = []
 
         print(f"\n{'=' * 60}")
         print("LOOKAHEAD TARGET CONCEPT (SUPERVISOR'S METHOD)")
@@ -158,293 +184,35 @@ class PandaPushTrajectoryEnv(gym.Env):
     # ==================================================================
 
     def _get_lookahead_target(self, bottle_xy):
-        """
-        Get target point 3-4 points AHEAD of bottle's closest point on trajectory.
-        This gives the bottle time to return to trajectory smoothly.
-
-        Returns: target_point (2D), target_index
-        """
-        if self.traj_manager.trajectory is None or len(self.traj_manager.trajectory) < 2:
-            return self.goal_position.copy(), 0
-
-        # Find bottle's closest point on trajectory
-        idx, _, _ = self.traj_manager._get_closest_point_on_trajectory(bottle_xy)
-
-        # Look ahead by lookahead_points
-        target_idx = min(idx + self.lookahead_points, len(self.traj_manager.trajectory) - 1)
-        target_point = self.traj_manager.trajectory[target_idx].copy()
-
-        # Near end of trajectory: use goal directly as target
-        # this ensures correction still works even at the end
-        if target_idx >= len(self.traj_manager.trajectory) - 2:
-            target_point = self.goal_position.copy()
-
-        return target_point, target_idx
+        return self.push_ctrl.get_lookahead_target(bottle_xy)
 
     def _get_push_direction(self, bottle_xy):
-        """
-        BLENDED push direction:
-        - When ON trajectory (small deviation): push along TANGENT
-        - When OFF trajectory (large deviation): push toward LOOKAHEAD TARGET
-        - Smooth blend prevents overcorrection oscillation
-
-        Returns: (push_direction, distance_to_target, target_point)
-        """
-        target_point, _ = self._get_lookahead_target(bottle_xy)
-        deviation_vec, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
-
-        # Vector from bottle to target
-        to_target = target_point - bottle_xy
-        distance = np.linalg.norm(to_target)
-
-        if distance > 1e-6:
-            correction_dir = to_target / distance
-        else:
-            # Already at target, use tangent
-            correction_dir = self.traj_manager._get_path_tangent(bottle_xy)
-
-        # pure tangent direction
-        tangent_dir = self.traj_manager._get_path_tangent(bottle_xy)
-
-        # Blend factor: 0 = pure tangent, 1 = full correction
-        # Below 0.5cm: mostly tangent (just push forward)
-        # Above 2.5cm: mostly correction ( push back to trajectory)
-        blend = np.clip((deviation_mag - 0.005) / 0.02, 0.0, 1.0)
-
-        push_direction = (1.0 - blend) * tangent_dir + blend * correction_dir
-
-        # Normalize
-        norm = np.linalg.norm(push_direction)
-        if norm > 1e-6:
-            push_direction = push_direction/norm
-        else:
-            push_direction = tangent_dir
-
-        return push_direction.astype(np.float32), float(distance), target_point
+        return self.push_ctrl.get_push_direction(bottle_xy)
 
     def _get_angle_error(self, bottle_xy):
-        """
-        Compute angle θ between current force direction P and desired push direction.
-
-        Goal: Minimize this angle!
-
-        Returns: angle_error in radians (0 = perfect alignment)
-        """
-        # Get current force direction
-        contact_force = self._get_contact_force()
-        force_mag = np.linalg.norm(contact_force[:2])
-
-        # Get desired push direction
-        push_dir, _, _ = self._get_push_direction(bottle_xy)
-
-        if force_mag > 0.5:  # Only compute if significant force
-            P_normalized = -contact_force[:2] / force_mag
-            dot_product = np.clip(np.dot(P_normalized, push_dir), -1.0, 1.0)
-            angle_error = np.arccos(dot_product)
-        else:
-            angle_error = 0.0
-
-        return float(angle_error)
+        return self.push_ctrl.get_angle_error(bottle_xy)
 
     def _get_hand_target_position(self, bottle_xy):
-        """
-        Hand position strategy:
-        - Small deviation: behind bottle along push direction (normal pushing)
-        - Large deviation: shift toward the side AWAY from trajectory
-            so the hand can push bottle BACK toward trajectory
-
-        The hand repositioning is what creates the corrective force, NOT the wrist rotation.
-
-        Returns: 3D target position [x, y, z] for hand
-        """
-        push_dir, _, _ = self._get_push_direction(bottle_xy)
-        # deviation_vec, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
-
-        # Base position: behind bottle along push direction
-        hand_xy = bottle_xy - push_dir * self.behind_distance
-
-        # # When deviation is significant, offset hand toward the outside
-        # # deviation_vec points FROM bottle TO trajectory
-        # # We want the hand on the opposite side (away from trajectory)
-        # if deviation_mag > 0.005:
-        #     away_from_traj = -deviation_vec / (deviation_mag + 1e-6)
-        #
-        #     # How much to offset: grows with deviation
-        #     side_blend = np.clip(deviation_mag / 0.04, 0.0, 1.0)
-        #     side_offset = away_from_traj * self.behind_distance * side_blend
-        #
-        #     hand_xy += side_offset
-
-        return np.array([hand_xy[0], hand_xy[1], self.target_z])
+        return self.push_ctrl.get_hand_target_position(bottle_xy)
 
     # ==================================================================
     #           VELOCITY COMPUTATION
     # ==================================================================
 
     def _compute_approach_velocity(self):
-        """Approach: Move hand behind bottle."""
-        hand_pos = self.data.xpos[self.hand_body_id]
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-
-        target_pos = self._get_hand_target_position(bottle_xy)
-        error = target_pos - hand_pos
-        dist = np.linalg.norm(error[:2])
-
-        v_desired = error * 2.0
-        v_mag = np.linalg.norm(v_desired[:2])
-        if v_mag > 0.04:
-            v_desired[:2] = v_desired[:2] / v_mag * 0.04
-
-        v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-
-        return v_desired, dist
+        return self.push_ctrl.compute_approach_velocity()
 
     def _compute_push_velocity(self, action):
-        """
-        SUPERVISOR'S METHOD:
-        - Push direction = direction to lookahead target
-        - Automatically blends forward + correction based on geometry
-        - Hand tracks behind bottle relative to push direction
-        """
-        hand_pos = self.data.xpos[self.hand_body_id]
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-        tilt = self._get_bottle_tilt()
-        is_touching = self._is_touching()
-
-        # adaptive target-z
-        # Adaptive height - compensate for arm droop at full extension
-        bottle_y = self.data.xpos[self.bottle_body_id][1]
-        distance_from_start = abs(bottle_y - self.bottle_start_y)
-        current_target_z = self.target_z + 0.02 * distance_from_start
-        current_target_z = max(current_target_z, 0.88)
-
-        # Parse action
-        forward_mod = action[0]
-        self.current_K[0] = self.K_min + action[2] * (self.K_max - self.K_min)
-        self.current_K[1] = self.K_min + action[3] * (self.K_max - self.K_min)
-        K_avg = np.mean(self.current_K)
-
-        # ==================== TILT SAFETY ====================
-        if self.is_settling:
-            self.settle_counter += 1
-
-            if self._check_stable():
-                self.is_settling = False
-                self.settle_counter = 0
-            elif self.settle_counter >= 200: # was 200
-                self.is_settling = False
-                self.settle_counter = 0
-
-            if self.is_settling:
-                v_desired = np.zeros(3)
-                # v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-                v_desired[2] = self.z_gain * (current_target_z - hand_pos[2])
-                return v_desired
-
-        if tilt < self.tilt_stop:
-            self.is_settling = True
-            self.settle_counter = 0
-
-        # Speed multiplier based on tilt
-        if tilt > self.tilt_ok:
-            speed_mult = 1.0
-        elif tilt > self.tilt_slow:
-            speed_mult = 0.5
-        else:
-            speed_mult = 0.2
-
-        v_desired = np.zeros(3)
-
-        # ==================== CONTACT RECOVERY ====================
-        if not is_touching:
-            bottle_direction = bottle_xy - hand_pos[:2]
-            bottle_dist = np.linalg.norm(bottle_direction)
-
-            if bottle_dist > 0.01:
-                bottle_dir_normalized = bottle_direction / bottle_dist
-                recovery_speed = min(0.08, bottle_dist * 3.0)
-
-                v_desired[0] = bottle_dir_normalized[0] * recovery_speed
-                v_desired[1] = bottle_dir_normalized[1] * recovery_speed
-                # v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-                v_desired[2] = self.z_gain * (current_target_z - hand_pos[2])
-
-                if self.episode_length % 50 == 0:
-                    print(f"    CONTACT LOST! Recovery: dist={bottle_dist * 100:.1f}cm")
-
-                return v_desired
-
-        # ==================== PUSH USING LOOKAHEAD TARGET ====================
-        # Get push direction (automatically blends forward + correction!)
-        push_dir, dist_to_target, target_point = self._get_push_direction(bottle_xy)
-
-        # Calculate push speed (RL can modulate)
-        base_speed = self.base_forward_speed * (1.0 + forward_mod * 0.3) * speed_mult
-
-        # K can also modulate speed slightly
-        k_factor = 0.8 + 0.4 * (K_avg / self.K_max)  # 0.8 to 1.2
-        push_speed = base_speed * k_factor
-
-        # Push velocity in direction of lookahead target
-        v_push = push_dir * push_speed
-
-        # ==================== TRACKING (stay behind bottle) ====================
-        target_hand_pos = self._get_hand_target_position(bottle_xy)
-        pos_error = target_hand_pos[:2] - hand_pos[:2]
-        v_tracking = pos_error * 3.0
-        v_tracking = np.clip(v_tracking, -0.03, 0.03)
-
-        # Combine push + tracking
-        v_desired[0] = v_push[0] + v_tracking[0]
-        v_desired[1] = v_push[1] + v_tracking[1]
-
-        # Limit total velocity
-        v_mag = np.linalg.norm(v_desired[:2])
-        if v_mag > 0.05:
-            v_desired[:2] = v_desired[:2] / v_mag * 0.05
-
-        # Height control
-        # v_desired[2] = self.z_gain * (self.target_z - hand_pos[2])
-        v_desired[2] = self.z_gain * (current_target_z - hand_pos[2])
-
-        # ==================== LOGGING ====================
-        angle_error = self._get_angle_error(bottle_xy)
-        self.angle_error_log.append(angle_error)
-
-        # Debug output
-        if self.episode_length % 100 == 0:
-            _, dev_mag = self.traj_manager._get_path_deviation(bottle_xy)
-            _, target_idx = self._get_lookahead_target(bottle_xy)
-            angle_deg = np.degrees(angle_error)
-            _, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
-            blend = np.clip((deviation_mag - 0.005) / 0.02, 0.0, 1.0)
-            print(f"    Lookahead: idx={target_idx}, push_dir=[{push_dir[0]:.2f}, {push_dir[1]:.2f}], "
-                  f"θ={angle_deg:.1f}°, dev={dev_mag * 100:.1f}cm, blend={blend:.2f}")
-
-        return v_desired
+        return self.push_ctrl.compute_push_velocity(action, self.episode_length, self.bottle_start_y)
 
     def _get_bottle_tilt(self):
-        """Get bottle tilt (1.0 = upright, <1.0 = tilting)"""
-        bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
-        return bottle_mat[2, 2]
+        return self.push_ctrl.get_bottle_tilt()
 
     def _check_stable(self):
-        """Check if bottle is stable (upright and not moving)"""
-        tilt = self._get_bottle_tilt()
-        angvel = np.linalg.norm(self.data.qvel[3:6])
-        return tilt > 0.97 and angvel < 0.1
+        return self.push_ctrl._check_stable()
 
     def _cartesian_to_joint_velocity(self, cart_vel):
-        """Convert Cartesian velocity to joint velocities using Jacobian."""
-        jacp = np.zeros((3, self.model.nv))
-        jacr = np.zeros((3, self.model.nv))
-        mujoco.mj_jacBody(self.model, self.data, jacp, jacr, self.hand_body_id)
-
-        J = jacp[:, 6:13]
-        JJT = J @ J.T
-        J_pinv = J.T @ np.linalg.inv(JJT + self.damping ** 2 * np.eye(3))
-
-        return J_pinv @ cart_vel
+        return self.push_ctrl.cartesian_to_joint_velocity(cart_vel)
 
     # def _compute_wrist_rotation(self, bottle_xy):
     #     """
@@ -535,7 +303,7 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Stiffness
         K_normalized = (self.current_K - self.K_min) / (self.K_max - self.K_min)
-        settling_flag = np.array([1.0 if self.is_settling else 0.0], dtype=np.float32)
+        settling_flag = np.array([1.0 if self.push_ctrl.is_settling else 0.0], dtype=np.float32)
 
         wrist_normalized = np.array([self.wrist_offset / self.max_wrist_rotation], dtype=np.float32)
 
@@ -647,7 +415,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             # Print status
             if self.episode_length % 50 == 0:
                 K_avg = np.mean(self.current_K)
-                mode = "SETTLE" if self.is_settling else "PUSH"
+                mode = "SETTLE" if self.push_ctrl.is_settling else "PUSH"
                 contact_status = "CONTACT" if is_touching else "NO CONTACT!"
                 print(f"Step {self.episode_length} [{mode}]: "
                       f"prog={progress:.1%}, dev={deviation_mag * 100:.1f}cm, "
@@ -714,9 +482,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.prev_progress = 0.0
         self.in_approach = True
         self.episode_length = 0
-        self.current_K = np.array([200.0, 200.0])
-        self.is_settling = False
-        self.settle_counter = 0
+        self.push_ctrl.current_K[:] = [200.0, 200.0]
+        self.push_ctrl.is_settling = False
+        self.push_ctrl.settle_counter = 0
 
         self.base_wrist_pos = self.current_qpos_target[6]
         self.wrist_offset = 0.0
@@ -724,7 +492,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.force_profile_log = []
         self.stiffness_profile_log = []
         self.deviation_log = []
-        self.angle_error_log = []
+        self.push_ctrl.angle_error_log = []
 
         print(f"\n{'=' * 50}")
         print(f"EPISODE: {traj_type}")
