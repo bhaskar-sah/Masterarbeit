@@ -8,3 +8,7 @@ __pycache__/
 # Large model/data files
 *.pt
 *.h5
+
+# Training artifacts (TensorBoard logs, saved models)
+**/ppo_push_tensorboard/
+**/saved_models/
