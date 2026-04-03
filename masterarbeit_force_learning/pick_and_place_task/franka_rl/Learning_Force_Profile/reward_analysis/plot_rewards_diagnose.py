@@ -350,7 +350,7 @@ def main():
 
     from stable_baselines3 import PPO
     # from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
-    from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction import PandaPushTrajectoryEnv
+    from pick_and_place_task.franka_rl.Learning_Force_Profile.other_recent_files.push_with_finger_learn_force_impedance_14_v01_straight_reward_correction import PandaPushTrajectoryEnv
 
     # Create environment (no rendering for data collection)
     env = PandaPushTrajectoryEnv(render_mode=None, trajectory_type=args.trajectory_type)
