@@ -12,3 +12,6 @@ __pycache__/
 # Training artifacts (TensorBoard logs, saved models)
 **/ppo_push_tensorboard/
 **/saved_models/
+
+# Mujoco message
+**/MUJOCO_LOG.TXT
