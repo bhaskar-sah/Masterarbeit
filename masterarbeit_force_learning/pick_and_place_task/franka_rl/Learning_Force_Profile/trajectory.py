@@ -23,10 +23,15 @@ class TrajectoryManager:
 
         elif traj_type == "curved":
             t = np.linspace(0, 1, n_points)
-            mid_point = np.array([0.55, 0.0])
+            # Compute control point perpendicular to the start→goal line
+            chord = goal - start
+            perp = np.array([-chord[1], chord[0]])  # rotate 90°
+            perp = perp / (np.linalg.norm(perp) + 1e-6)
+            curve_offset = 0.15  # meters, how much the curve bows sideways
+            mid_point = (start + goal) / 2.0 + perp * curve_offset
             x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * mid_point[0] + t ** 2 * goal[0]
             y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * mid_point[1] + t ** 2 * goal[1]
-            self.trajectory = np.stack([x,y], axis=1)
+            self.trajectory = np.stack([x, y], axis=1)
 
         elif traj_type == "s_curve":
             t = np.linspace(0, 1, n_points)

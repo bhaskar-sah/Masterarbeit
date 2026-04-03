@@ -88,6 +88,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         # base_wrist_pos is set in reset() from the home keyframe joint position
         self.base_wrist_pos = 0.0
 
+        self.lookahead_points=cfg.lookahead_points
         # ==================== CONTACT ====================
         self.contact_manager = ContactManager(self.model, self.data, self.robot_contact_bodies, self.bottle_body_id)
 
@@ -96,6 +97,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             goal_position=cfg.goal_position,
             path_tolerance=cfg.path_tolerance,
         )
+        self.traj_manager.trajectory_type = trajectory_type
         self.goal_position = self.traj_manager.goal_position
 
         # ==================== PUSH CONTROLLER ====================
@@ -300,7 +302,8 @@ class PandaPushTrajectoryEnv(gym.Env):
             is_settling=self.push_ctrl.is_settling,
             episode_length=self.episode_length,
         )
-        self.in_approach = self.reward_manager.in_approach
+        # One-way door: once in_approach is False it never goes back to True
+        self.in_approach = self.in_approach and self.reward_manager.in_approach
         self.prev_progress = self.reward_manager.prev_progress
         return result
 
