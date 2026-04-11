@@ -44,36 +44,38 @@ class RewardManager:
                 print(f"Step {episode_length} [APPROACH]: dist={dist_to_bottle:.3f}m")
 
         else:
+            # Alignment factor
+            alignment = max(np.cos(angle_error), 0.0)
+            angle_deg = np.degrees(angle_error) # 1.0 when aligned, 0.0 when perpendicular
+
             # 1. Progress reward
             progress_delta = progress - self.prev_progress
-            r_progress = 100.0 * max(progress_delta, 0)
+            r_progress = 100.0 * max(progress_delta, 0) * alignment
 
             # 2. Deviation reward (stay on trajectory)
             max_dev_reward = 5.0
             dev_slope = 100.0
-            r_deviation = max_dev_reward - dev_slope * deviation_mag
+            r_deviation = (max_dev_reward - dev_slope * deviation_mag) * alignment
             r_deviation = max(r_deviation, -15.0)
 
             # 3. Angle error reward (minimize θ)
-            angle_deg = np.degrees(angle_error)
-            if angle_deg < 10:
-                r_angle = 2.0
-            elif angle_deg < 30:
-                r_angle = 1.0
-            elif angle_deg < 60:
-                r_angle = 0.0
-            else:
-                r_angle = -2.0
+            r_angle = 5.0 - (angle_deg / 5.0)
+            r_angle = np.clip(r_angle, -15.0, 5.0)
 
             # 4. Stability reward
-            if tilt > 0.995:
-                r_stability = 3.0
-            elif tilt > 0.99:
-                r_stability = 1.0
-            elif tilt > 0.98:
-                r_stability = 0.0
+            # if tilt > 0.995:
+            #     r_stability = 3.0
+            # elif tilt > 0.99:
+            #     r_stability = 1.0
+            # elif tilt > 0.98:
+            #     r_stability = 0.0
+            # else:
+            #     r_stability = -15.0 * (1 - tilt)
+            if tilt > 0.98:
+                r_stability = 3.0 * (tilt - 0.98) / 0.02
             else:
-                r_stability = -15.0 * (1 - tilt)
+                r_stability = -10.0 * (0.98 - tilt)
+            r_stability = np.clip(r_stability, -10.0, 3.0)
 
             # 5. Contact reward
             if is_touching:
@@ -90,7 +92,7 @@ class RewardManager:
                 contact_status = "CONTACT" if is_touching else "NO CONTACT!"
                 print(f"Step {episode_length} [{mode}]: "
                       f"prog={progress:.1%}, dev={deviation_mag * 100:.1f}cm, "
-                      f"θ={angle_deg:.1f}°, K={K_avg:.0f}, F={force_mag:.1f}N, "
+                      f"θ={angle_deg:.1f}°, align={alignment:.2f}, K={K_avg:.0f}, F={force_mag:.1f}N, "
                       f"tilt={tilt:.4f}, {contact_status}")
 
         # Time penalty

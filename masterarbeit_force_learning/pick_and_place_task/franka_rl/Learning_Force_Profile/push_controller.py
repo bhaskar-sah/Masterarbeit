@@ -238,7 +238,13 @@ class PushController:
         # ==================== PUSH USING LOOKAHEAD TARGET ====================
         push_dir, dist_to_target, target_point = self.get_push_direction(bottle_xy)
 
-        base_speed = self.base_forward_speed * (1.0 + forward_mod * 0.3) * speed_mult
+        # base_speed = self.base_forward_speed * (1.0 + forward_mod * 0.3) * speed_mult
+        # k_factor = 0.8 + 0.4 * (K_avg / self.K_max)
+        # push_speed = base_speed * k_factor
+
+        # Agent can control speed from 10% to 100% (not 70% to 130%)
+        speed_factor = 0.1 + 0.9 * ((forward_mod + 1.0) / 2.0)  # Maps [-1,1] to [0.1, 1.0]
+        base_speed = self.base_forward_speed * speed_factor * speed_mult
         k_factor = 0.8 + 0.4 * (K_avg / self.K_max)
         push_speed = base_speed * k_factor
 

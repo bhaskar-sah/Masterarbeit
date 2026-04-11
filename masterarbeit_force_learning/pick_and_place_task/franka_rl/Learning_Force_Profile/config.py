@@ -10,7 +10,7 @@ class EnvConfig:
     """
 
     # ==================== TRAJECTORY ====================
-    goal_position: np.ndarray = field(default_factory=lambda: np.array([0.4, -0.2]))
+    goal_position: np.ndarray = field(default_factory=lambda: np.array([0.4, -0.4]))
     path_tolerance: float = 0.05          # Max deviation before off_path penalty (m)
 
     # ==================== PUSH PARAMETERS ====================
@@ -29,10 +29,10 @@ class EnvConfig:
     K_max: float = 500.0                  # Maximum Cartesian stiffness (N/m)
 
     # ==================== TILT SAFETY ====================
-    tilt_ok: float = 0.99                 # Full speed above this tilt
-    tilt_slow: float = 0.98               # Half speed below this tilt
-    tilt_stop: float = 0.96              # Trigger settle mode below this tilt
-    settle_required: int = 25             # Steps needed to confirm stability
+    tilt_ok: float = 0.98 # 0.97 # was 0.99                 # Full speed above this tilt
+    tilt_slow: float = 0.97 # 0.95 # was 0.98               # Half speed below this tilt
+    tilt_stop: float = 0.95 # 0.93 # was 0.96              # Trigger settle mode below this tilt
+    settle_required: int = 50 # 25             # Steps needed to confirm stability
 
     # ==================== CARTESIAN CONTROL ====================
     target_z: float = 0.92               # Desired hand height (m)
