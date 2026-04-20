@@ -51,7 +51,7 @@ class ReachConfig:
     #   target_z = 0.865 + 0.10 = 0.965
     #
     # Note: xpos[hand_body_id] reports this origin, NOT the fingertip.
-    target_z: float = 0.865
+    target_z: float = 0.96
 
     # Bottle collision radius (m) — from XML: size="0.039 0.05"
     # Used to compute the contact surface position on the bottle skin

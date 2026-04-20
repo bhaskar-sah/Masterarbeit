@@ -275,7 +275,8 @@ class PandaReachEnv(gym.Env):
         v_des = np.array([
             action[0] * self.config.v_max,
             action[1] * self.config.v_max,
-            action[2] * self.config.v_max
+            # action[2] * self.config.v_max
+            0.0
         ])
 
         # Initialize desired position
@@ -512,31 +513,31 @@ class PandaReachEnv(gym.Env):
             offset[0] * (-self.approach_dir_2d[1]) +
             offset[1] * self.approach_dir_2d[0]
         )
-        reward -= 30.0 * lateral_error
+        reward -= 60.0 * lateral_error
 
         # Contact bonus
         if info["is_touching"]:
             reward += self.config.contact_bonus * 0.1
 
             # Extra bonus for gentle contact (low velocity at contact)
-            if vel_magnitude < 0.03:
-                reward += 2.0
+            if vel_magnitude < 0.01:
+                reward += 10.0
 
             # Penalty for pushing the bottle — it should stay in place
             bottle_displacement = np.linalg.norm(
                 bottle_pos[:2] - self.bottle_start_xy
             )
             if bottle_displacement > 0.005:
-                reward -= 30.0 * bottle_displacement
+                reward -= 200.0 * bottle_displacement
 
             # Penalty for any velocity while in contact (should be stationary)
             if vel_magnitude > 0.01:
-                reward -= 10.0 * vel_magnitude
+                reward -= 100.0 * vel_magnitude
 
         # Tilt penalty
         tilt = info["bottle_tilt"]
         if tilt < 0.99:
-            reward -= self.config.w_tilt_penalty * (0.99 - tilt)
+            reward -= 100 * (0.99 - tilt)
 
         # Time penalty
         reward -= self.config.time_penalty
@@ -554,6 +555,19 @@ class PandaReachEnv(gym.Env):
         print(f"  Contact:   {info['is_touching']}")
         print(f"  Approach:  ({self.approach_dir_2d[0]:.3f}, "
               f"{self.approach_dir_2d[1]:.3f})")
+        # --- THE CHEAT CODE: Extract the exact qpos from the environment! ---
+        # The bottle uses the first 7 positions (3 translation + 4 quaternion)
+        bottle_qpos = self.data.qpos[0:7]
+        bottle_str = " ".join([f"{x:.6f}" for x in bottle_qpos])
+        
+        # The robot uses the next 7 positions (the 7 arm joints)
+        robot_qpos = self.data.qpos[7:14]
+        robot_str = " ".join([f"{x:.6f}" for x in robot_qpos])
+        
+        print(f"\n--- COPY THIS EXACT KEYFRAME INTO YOUR XML FOR PHASE 2 ---")
+        print(f'<key name="push_start"')
+        print(f'     qpos="{bottle_str} {robot_str} 0.04 0.04"') # 0.04 0.04 keeps fingers open
+        print(f'     ctrl="0 0 0 0 0 0 0 0"/>')
         print(f"----------------------------------------------------\n")
 
     def _print_debug(self, info):
@@ -574,8 +588,8 @@ class PandaReachEnv(gym.Env):
 
     def _get_ee_position(self):
         """Get end-effector position."""
-        # return self.data.xpos[self.hand_body_id].copy()
-        return self.data.site_xpos[self.gripper_site_id].copy()
+        return self.data.xpos[self.hand_body_id].copy()
+        # return self.data.site_xpos[self.gripper_site_id].copy()
 
     def _get_ee_velocity(self):
         """Get end-effector linear velocity."""

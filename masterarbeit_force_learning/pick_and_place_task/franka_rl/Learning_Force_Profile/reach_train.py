@@ -19,8 +19,8 @@ from reach_env import PandaReachEnv
 
 
 # ==================== CONFIGURATION ====================
-TOTAL_TIMESTEPS = 100_000
-MODEL_NAME = "reach_model_15"
+TOTAL_TIMESTEPS = 200_000
+MODEL_NAME = "reach_model_31"
 
 # ==================== SETUP ====================
 print("=" * 60)

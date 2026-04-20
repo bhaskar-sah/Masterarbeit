@@ -15,7 +15,7 @@ from reach_env import PandaReachEnv
 
 
 # ==================== CONFIGURATION ====================
-MODEL_NAME = "reach_model_15.zip"
+MODEL_NAME = "reach_model_31.zip"
 NUM_EPISODES = 50
 VISUAL_DELAY = 0.1  # Seconds between frames (0 for max speed)
 
