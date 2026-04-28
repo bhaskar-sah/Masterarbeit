@@ -1,46 +1,91 @@
-from dataclasses import dataclass, field
+"""
+config.py  (updated)
+
+CHANGES from previous version:
+  - obs_dim: 45 -> 48 (added cos_force_alignment + future_push_dir)
+  - All other reward weights and gains kept the same
+"""
+
 import numpy as np
+from dataclasses import dataclass
+from typing import Tuple
 
 
 @dataclass
 class EnvConfig:
-    """
-    All hyperparameters for PandaPushTrajectoryEnv.
-    Change values here instead of editing the environment code.
-    """
+    # ============================================================
+    # CONTROLLER GAINS
+    # ============================================================
+    Kp: float = 100.0
+    Kd: float = 20.0
+    Kf: float = 0.5
 
-    # ==================== TRAJECTORY ====================
-    goal_position: np.ndarray = field(default_factory=lambda: np.array([0.4, -0.4]))
-    path_tolerance: float = 0.05          # Max deviation before off_path penalty (m)
+    Kp_rot: float = 10.0
+    Kd_rot: float = 2.0
 
-    # ==================== PUSH PARAMETERS ====================
-    base_forward_speed: float = 0.015     # Base push speed (m/s)
-    behind_distance: float = 0.04         # Distance hand stays behind bottle (m)
+    # ============================================================
+    # ACTION LIMITS
+    # ============================================================
+    v_max: float = 0.05
+    w_max: float = 2.0
+    f_max: float = 20.0
+    F_FLOOR: float = 0.5 # was 2.0
 
-    # ==================== LOOKAHEAD ====================
-    lookahead_points: int = 4             # Points ahead on trajectory to aim for
+    # ============================================================
+    # TRAJECTORY
+    # ============================================================
+    goal_position: Tuple[float, float] = (0.4, -0.4)
+    n_trajectory_points: int = 50
+    lookahead_points: int = 4
+    path_tolerance: float = 0.05
 
-    # ==================== WRIST ROTATION ====================
-    gripper_push_angle_at_home: float = -np.pi / 2   # -90 deg home wrist angle
-    max_wrist_rotation: float = 2.5       # Max wrist joint offset (rad)
+    # ============================================================
+    # TIMING
+    # ============================================================
+    dt: float = 0.002
+    n_substeps: int = 20
+    max_episode_length: int = 2500
+    control_dt: float = 0.04
 
-    # ==================== STIFFNESS (What RL learns!) ====================
-    K_min: float = 100.0                  # Minimum Cartesian stiffness (N/m)
-    K_max: float = 500.0                  # Maximum Cartesian stiffness (N/m)
+    # ============================================================
+    # TILT SAFETY
+    # ============================================================
+    tilt_threshold_ok: float = 0.98
+    tilt_threshold_slow: float = 0.90
 
-    # ==================== TILT SAFETY ====================
-    tilt_ok: float = 0.98 # 0.97 # was 0.99                 # Full speed above this tilt
-    tilt_slow: float = 0.97 # 0.95 # was 0.98               # Half speed below this tilt
-    tilt_stop: float = 0.95 # 0.93 # was 0.96              # Trigger settle mode below this tilt
-    settle_required: int = 50 # 25             # Steps needed to confirm stability
+    # ============================================================
+    # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
+    # ============================================================
+    w_progress: float = 500.0
+    w_deviation: float = 30.0           # was 100; now used quadratically
+    max_deviation_reward: float = 5.0   # legacy, unused
+    w_stability: float = 3.0
+    w_contact: float = 0.0
+    w_contact_loss: float = -10.0
+    w_force_smoothness: float = 0.01
+    w_force: float = 0.05               # legacy
+    target_force: float = 5.0
+    w_alignment: float = 0.5            # was 0.3
+    w_position: float = 1.0             # was 0.5
 
-    # ==================== CARTESIAN CONTROL ====================
-    target_z: float = 0.92               # Desired hand height (m)
-    z_gain: float = 10.0                  # Proportional gain for Z control
-    damping: float = 0.01                 # Jacobian damping for IK
+    time_penalty: float = 0.5 # was 0.005
 
-    # ==================== EPISODE ====================
-    max_episode_length: int = 2500        # Steps before truncation
+    success_bonus: float = 100.0
+    failure_penalty: float = -100.0
+    off_path_penalty: float = -10.0     # was -50
 
-    # ==================== OBSERVATION ====================
-    obs_dim: int = 39                     # Observation vector dimension
+    # ============================================================
+    # OBSERVATION SPACE
+    # ============================================================
+    # Layout: see observation.py for full index reference
+    # 7 + 7 + 3 + 3 + 3 + 2 + 1 + 2 + 1 + 2 + 1 + 1 + 3 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 = 48
+    obs_dim: int = 48
+
+    # ============================================================
+    # ACTION SPACE: [vx, vy, wz, f]
+    # ============================================================
+    action_dim: int = 4
+
+
+def get_default_config() -> EnvConfig:
+    return EnvConfig()

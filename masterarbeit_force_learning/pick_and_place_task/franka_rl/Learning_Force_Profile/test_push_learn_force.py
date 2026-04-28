@@ -25,7 +25,13 @@ from stable_baselines3 import PPO
 # from push_learn_force_impedance_13_rotation_correction_new import PandaPushTrajectoryEnv
 # from push_with_finger_learn_force_impedance_14 import PandaPushTrajectoryEnv
 # from push_with_finger_learn_force_impedance_14_v01_curriculum_learning import PandaPushTrajectoryEnv
-from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
+#################
+# from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
+from env import PandaPushTrajectoryEnv
+############
+# from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction import PandaPushTrajectoryEnv
+# from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning import PandaPushTrajectoryEnv
+# from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_1 import PandaPushTrajectoryEnv
 
 # ==================== CONFIGURATION ====================
 # MODEL_NAME = "push_trajectory_impedance_straight_01.zip"  # Change to your model name
@@ -68,12 +74,53 @@ from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTraj
 # MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_201.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
 # MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_curved_201.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
 # MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_202.zip"  # make the amplitude 0.04 for this model with smaller distance goal [0.4;-0.2]
-MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_203_0_08.zip"  # make the amplitude 0.08 for this model with smaller distance goal [0.4;-0.2]
-# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_203_0_ 08_longer_distance.zip"  # make the amplitude 0.04 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_203_0_08.zip"  # make the amplitude 0.08 for this model with smaller distance goal [0.4;-0.2]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_203_0_ 08_longer_distance.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_s_curve_203_0_08_longer_distance_new.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+#################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_straight_1.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_curved_1.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_curved_1_.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_1.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_2.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_3.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_4.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_5.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_6.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_7.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_8.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_10.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_11.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_s_curve_2_12.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+###############################################################################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_1_straight_1_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_straight_1_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+################################################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_straight_2_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_straight_3_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_straight_4_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_straight_6_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+###############################################################################################################
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_1_straight.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_1_straight_1.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_1_curved.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning_1_curved_1.zip"  # make the amplitude 0.08 for this model with longer distance goal [0.4;-0.4]
+# MODEL_NAME = "best_model.zip"
+###############################################
+# MODEL_NAME = "trained_model_straight.zip"
+# MODEL_NAME = "trained_model_curved.zip"
+# MODEL_NAME = "trained_model_s_curve.zip"
+# MODEL_NAME = "trained_model_straight_r_angle.zip"
+# MODEL_NAME = "trained_model_curved_r_angle_1.zip"
 
-# TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
+# MODEL_NAME = "trained_model_s_curve_r_angle_3.zip"
+MODEL_NAME = "trained_model_straight_only_push_v11.zip"
+
+TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization
-TRAJECTORY_TYPE = "s_curve"  # Should match training or test generalization
+# TRAJECTORY_TYPE = "s_curve"  # Should match training or test generalization
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.02  # Seconds between frames (0 for max speed)
 
@@ -91,11 +138,14 @@ print("Environment created.")
 
 # ==================== LOAD MODEL ====================
 current_dir = os.path.dirname(os.path.realpath(__file__))
+# model_path = os.path.join(current_dir, "saved_models/best_model_straight_1", MODEL_NAME)
+# model_path = os.path.join(current_dir, "saved_models/best_model_curved", MODEL_NAME)
 model_path = os.path.join(current_dir, "saved_models", MODEL_NAME)
 
 if not os.path.exists(model_path):
     print(f"Error: Model file not found at {model_path}")
     print("Available models in saved_models/:")
+    # models_dir = os.path.join(current_dir, "saved_models/best_model_straight_1")
     models_dir = os.path.join(current_dir, "saved_models")
     if os.path.exists(models_dir):
         for f in os.listdir(models_dir):

@@ -157,7 +157,7 @@
       <geom type="sphere" size="0.001" pos="0.02 -0.0346 0" condim="3" friction="0.8 0.005 0.0001" solref="0.02 1"/>
     </body>
     <!-- -->
-    <site name="goal" pos="0.4 -0.2 0.80" size="0.02" rgba="0.8 0.1 0.1 0.7"/>
+    <site name="goal" pos="0.4 -0.4 0.80" size="0.02" rgba="0.8 0.1 0.1 0.7"/>
 
     <body name="link0" childclass="panda" pos="-0.2 0 0.8">
       <inertial mass="0.629769" pos="-0.041018 -0.00014 0.049974"
@@ -257,7 +257,7 @@
                       <geom mesh="hand_3" material="white" class="visual"/>
                       <geom mesh="hand_4" material="off_white" class="visual"/>
                       <geom mesh="hand_c" class="collision"/>
-                      <site name="hand_center" pos="0 0 0.03" size="0.02" rgba="1 0 0 0.5"/>
+                      <!-- <site name="hand_center" pos="0 0 0.03" size="0.02" rgba="1 0 0 0.5"/> -->
                       <!-- NEW: Gripper center site - point between fingertips for pushing -->
                       <!-- pos="0 0 0.1" = 0.0584 (finger offset) + ~0.04 (fingertip length) -->
                       <site name="gripper_center" pos="0 0 0.1" size="0.015" rgba="0 1 0 1"/>
@@ -305,6 +305,9 @@
 
   <equality>
     <joint joint1="finger_joint1" joint2="finger_joint2" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+
+    <joint name="lock_finger_1" joint1="finger_joint1" polycoef="0 0 0 0 0"/>
+    <joint name="lock_finger_2" joint1="finger_joint2" polycoef="0 0 0 0 0"/>
   </equality>
 
   <!-- ============================================================
@@ -342,9 +345,10 @@
 
     <!-- NEW: Push phase starting position (matches reach end condition) -->
     <key name="push_start"
-         qpos="0.400221 0.199769 0.802149 0.999831 0.018132 0.001075 -0.002769 0.285311 0.717482 0.134904 -1.741957 -0.203183 2.383109 -0.208838 0.0 0.0"
+         qpos="0.400000 0.200000 0.805000 1.000000 0.000000 0.000000 0.000000 0.307175 0.745994 0.107003 -1.773306 -0.123545 2.512819 2.842014 0.00 0.00"
          ctrl="0 0 0 0 0 0 0 0"/>
   </keyframe>
+  <!-- qpos="0.400221 0.199769 0.802149 0.999831 0.018132 0.001075 -0.002769 0.285311 0.717482 0.134904 -1.741957 -0.203183 2.383109 -0.208838 0.0 0.0" -->
 
   <contact>
     <exclude body1="link0" body2="link1"/>

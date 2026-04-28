@@ -1,7 +1,9 @@
 import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.monitor import Monitor
 # from push_learn_force import PandaPushTrajectoryEnv
 # from push_learn_force_impedance import PandaPushTrajectoryEnv
 # from push_learn_force_impedance_1 import PandaPushTrajectoryEnv
@@ -25,15 +27,18 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 # from push_learn_force_impedance_13_rotation_correction_new import PandaPushTrajectoryEnv
 # from push_with_finger_learn_force_impedance_14 import PandaPushTrajectoryEnv
 # from push_with_finger_learn_force_impedance_14_v01 import PandaPushTrajectoryEnv
-from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
+# from push_with_finger_learn_force_impedance_14_v01_straight import PandaPushTrajectoryEnv
+# from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction import PandaPushTrajectoryEnv
+# from push_with_finger_learn_force_impedance_14_v01_straight_reward_correction_tuning import PandaPushTrajectoryEnv
+from env import PandaPushTrajectoryEnv
 
 ALGORITHM = "PPO"
-# TRAJECTORY_TYPE = "straight"
+TRAJECTORY_TYPE = "straight"
 # TRAJECTORY_TYPE = "curved"
-TRAJECTORY_TYPE = "s_curve"
+# TRAJECTORY_TYPE = "s_curve"
 TOTAL_TIMESTEPS = 1_000_000
 # MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_02"
-MODEL_NAME = f"push_with_finger_learn_force_impedance_14_v01_straight_{TRAJECTORY_TYPE}_203_0_ 08_longer_distance"
+MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v11"
 # MODEL_NAME = f"push_learn_force_impedance_9_orientation_added_{TRAJECTORY_TYPE}_01"
 
 
@@ -44,10 +49,12 @@ print("="*60)
 print(f"Algorithm: {ALGORITHM}")
 print(f"Trajectory: {TRAJECTORY_TYPE}")
 print(f"Timesteps: {TOTAL_TIMESTEPS}")
+print(f"Goal: (0.20, -0.40) - down left diagonal")
 print("="*60)
 
+# Create training environment
 env = PandaPushTrajectoryEnv(
-    render_mode=None,
+    render_mode="human",
     trajectory_type=TRAJECTORY_TYPE
 )
 print("Environment Created!!!!!")
@@ -61,6 +68,17 @@ except Exception as e:
     env.close()
     exit()
 
+# Wrap in VecEnv for potential normalization (optional but recommended)
+# env = DummyVecEnv([lambda: env])
+# env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+# Create evaluation environment (separate from training)
+eval_env = PandaPushTrajectoryEnv(
+    render_mode="human",
+    trajectory_type=TRAJECTORY_TYPE
+)
+eval_env = Monitor(eval_env)
+
 model = PPO(
     "MlpPolicy",
     env,
@@ -72,8 +90,11 @@ model = PPO(
     gamma=0.99,
     gae_lambda=0.95,
     clip_range=0.2,
-    ent_coef=0.01,
-    tensorboard_log="./ppo_push_tensorboard/"
+    ent_coef=0.01,  # Exploration bonus
+    vf_coef=0.5,
+    max_grad_norm=0.5,
+    tensorboard_log="./ppo_push_tensorboard/",
+    device="auto"  # Uses GPU if available
 )
 
 # --- CALLBACKS ---
@@ -87,11 +108,29 @@ checkpoint_callback = CheckpointCallback(
     name_prefix=MODEL_NAME
 )
 
+# Evaluate model every 20k steps
+eval_callback = EvalCallback(
+    eval_env,
+    # best_model_save_path=os.path.join(save_folder, "best_model"),
+    best_model_save_path=os.path.join(save_folder, f"trained_model_{TRAJECTORY_TYPE}_only_push_v9"),
+    # log_path=os.path.join(save_folder, "eval_logs"),
+    log_path=os.path.join(save_folder, f"eval_logs_trained_model_{TRAJECTORY_TYPE}_only_push_v9"),
+    eval_freq=20000,
+    n_eval_episodes=5,
+    deterministic=True,
+    render=False
+)
+
 # --- 3. Train Model ---
-print("Starting training......")
+print("\nStarting training...")
+print("Monitor with: tensorboard --logdir ./ppo_push_tensorboard/")
+print("-"*60)
+
 model.learn(
     total_timesteps=TOTAL_TIMESTEPS,
-    # callback=checkpoint_callback,
+    # callback=[checkpoint_callback, eval_callback],
+    callback=[checkpoint_callback],
+
     progress_bar=True
 )
 
@@ -125,7 +164,10 @@ while steps_taken < 200000:
 model_save_path = os.path.join(save_folder, MODEL_NAME)
 model.save(model_save_path)
 env.close()
+eval_env.close()
 
 print("\n" + "="*60)
 print(f"Training complete!")
 print(f"Model saved to: {model_save_path}.zip")
+print(f"Best model saved to: {save_folder}/best_trained_model_{TRAJECTORY_TYPE}_only_push_v9/")
+print("="*60)

@@ -1,19 +1,17 @@
+# env.py
 """
-Panda Push Environment - Lookahead Target Concept (Supervisor's Method)
+Panda Push Trajectory Environment with Learned Force Profile (Pure RL).
 
-Key Concept:
-    - Push direction = Vector from bottle to LOOKAHEAD TARGET (3-4 points ahead)
-    - When ON trajectory: lookahead direction ≈ tangent (forward motion)
-    - When OFF trajectory: lookahead direction = correction + forward (automatic blend!)
-    - Minimize angle θ between Force P and correction vector
-    - No separate forward/correction weighting needed - geometry handles it!
+This environment implements Marko's force-velocity control approach where:
+    - RL learns: velocity (vx, vy, vz) and force magnitude (f)
+    - Controller: Converts these to joint torques via J^T × F_cmd + τ_gravity
 
-Updates:
-    - Blended push direction (tangent when on-track, correction when off-track)
-    - Hand repositions to SIDE of bottle when deviation is large
-    - Wrist aligns with push direction (hand position handles correction geometry)
-    - Faster wrist response
-    - 200 trajectory points for finer resolution
+Action space: [vx, vy, vz, f] - all in [-1, 1]
+    - vx, vy, vz: Desired end-effector velocity (scaled to ±v_max)
+    - f: Push force magnitude (scaled to [0, f_max])
+
+The robot pushes a bottle along a predefined trajectory using
+direct torque control with a PD + Force controller and gravity compensation.
 """
 
 import gymnasium as gym
@@ -21,34 +19,78 @@ from gymnasium import spaces
 import mujoco
 import numpy as np
 import os
+from debug_utils import DebugPrinter, StepLogger
 
-from config import EnvConfig
+from config import EnvConfig, get_default_config
 from trajectory import TrajectoryManager
 from contact import ContactManager
 from push_controller import PushController
-from reward import RewardManager
 from observation import ObservationBuilder
+from reward import RewardComputer
 from logger import EpisodeLogger
 from renderer import TrajectoryRenderer
 
 
 class PandaPushTrajectoryEnv(gym.Env):
     """
-    Lookahead Target Concept (Supervisor's Method):
-        - Push direction = direction to lookahead target (blended with tangent)
-        - Hand repositions to side of bottle for correction
-        - Wrist aligns with push direction
-        - Automatically blends forward + correction based on geometry
+    Gymnasium environment for pushing a bottle along a trajectory.
+    
+    Uses torque control with learned velocity and force commands.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, render_mode=None, trajectory_type="straight", config: EnvConfig = None):
+    def __init__(self, render_mode=None, trajectory_type="straight", config=None):
+        """
+        Initialize the environment.
+
+        Args:
+            render_mode: "human" for visualization, None for training
+            trajectory_type: "straight", "curved", or "s_curve"
+            config: EnvConfig (optional, uses default if None)
+        """
         super().__init__()
 
-        cfg = config if config is not None else EnvConfig()
+        # Configuration
+        self.config = config if config is not None else get_default_config()
+        self.trajectory_type = trajectory_type
+        self.render_mode = render_mode
 
-        # Load model
+        # Load MuJoCo model
+        self._load_model()
+
+        # Get body IDs
+        self._get_body_ids()
+
+        # Initialize managers
+        self._init_managers()
+
+        # Action space: [vx, vy, wz, f]
+        self.action_space = spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(4,),
+            dtype=np.float32
+        )
+
+        # Observation space
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.config.obs_dim,),
+            dtype=np.float32
+        )
+
+        # Episode state
+        self.episode_length = 0
+
+        self.debug_printer = DebugPrinter(self.config, print_every=50)
+        self.step_logger = StepLogger("logs/training_run.csv")
+        self.episode_num = 0
+        self.total_steps = 0
+
+    def _load_model(self):
+        """Load MuJoCo model from XML."""
         current_dir = os.path.dirname(os.path.realpath(__file__))
         xml_path = os.path.join(current_dir, "robot_panda_push_force.xml")
         xml_path = os.path.abspath(xml_path)
@@ -59,8 +101,9 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
 
-        # IDs
-        self.home_key_id = self.model.key("home").id
+    def _get_body_ids(self):
+        """Get MuJoCo body IDs."""
+        self.push_start_key_id = self.model.key("push_start").id
         self.bottle_body_id = self.model.body("bottle").id
         self.hand_body_id = self.model.body("hand").id
         self.goal_site_id = self.model.site("goal").id
@@ -73,342 +116,246 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.right_finger_body_id
         }
 
-        # Control
-        self.actuator_ranges = self.model.actuator_ctrlrange[:7, :]
-        self.act_low = self.actuator_ranges[:, 0]
-        self.act_high = self.actuator_ranges[:, 1]
-        self.current_qpos_target = np.zeros(7)
-
-        # Config shortcuts (for readability in step/reset)
-        self.K_min = cfg.K_min
-        self.K_max = cfg.K_max
-        self.max_wrist_rotation = cfg.max_wrist_rotation
-        self.max_episode_length = cfg.max_episode_length
-
-        # base_wrist_pos is set in reset() from the home keyframe joint position
-        self.base_wrist_pos = 0.0
-
-        self.lookahead_points=cfg.lookahead_points
-        # ==================== CONTACT ====================
-        self.contact_manager = ContactManager(self.model, self.data, self.robot_contact_bodies, self.bottle_body_id)
-
-        # ==================== TRAJECTORY ====================
+    def _init_managers(self):
+        """Initialize all manager objects."""
+        # Trajectory manager
         self.traj_manager = TrajectoryManager(
-            goal_position=cfg.goal_position,
-            path_tolerance=cfg.path_tolerance,
+            goal_position=np.array(self.config.goal_position),
+            path_tolerance=self.config.path_tolerance,
+            lookahead_points=self.config.lookahead_points
         )
-        self.traj_manager.trajectory_type = trajectory_type
-        self.goal_position = self.traj_manager.goal_position
 
-        # ==================== PUSH CONTROLLER ====================
-        # Note: current_K and is_settling are owned by push_ctrl.
-        # The env references below are aliases so all existing code keeps working.
-        self.push_ctrl = PushController(
-            model=self.model,
-            data=self.data,
-            traj_manager=self.traj_manager,
-            contact_manager=self.contact_manager,
-            hand_body_id=self.hand_body_id,
-            bottle_body_id=self.bottle_body_id,
-            goal_position=self.goal_position,
-            lookahead_points=cfg.lookahead_points,
-            base_forward_speed=cfg.base_forward_speed,
-            behind_distance=cfg.behind_distance,
-            target_z=cfg.target_z,
-            z_gain=cfg.z_gain,
-            damping=cfg.damping,
-            K_min=cfg.K_min,
-            K_max=cfg.K_max,
-            tilt_ok=cfg.tilt_ok,
-            tilt_slow=cfg.tilt_slow,
-            tilt_stop=cfg.tilt_stop,
-            settle_required=cfg.settle_required,
+        # Contact manager
+        self.contact_manager = ContactManager(
+            self.model,
+            self.data,
+            self.robot_contact_bodies,
+            self.bottle_body_id
         )
-        # Alias push_ctrl's mutable state so env references stay in sync
-        self.current_K = self.push_ctrl.current_K
 
-        # Logging
-        self.logger = EpisodeLogger()
-        self.push_ctrl.logger = self.logger  # push_ctrl logs angle errors via shared logger
+        # Push controller
+        self.push_controller = PushController(
+            self.model,
+            self.data,
+            self.traj_manager,
+            self.contact_manager,
+            self.hand_body_id,
+            self.bottle_body_id,
+            self.config
+        )
 
-        # ==================== OBSERVATION ====================
+        # Observation builder
         self.obs_builder = ObservationBuilder(
-            data=self.data,
-            traj_manager=self.traj_manager,
-            push_ctrl=self.push_ctrl,
-            contact_manager=self.contact_manager,
-            hand_body_id=self.hand_body_id,
-            bottle_body_id=self.bottle_body_id,
-            K_min=cfg.K_min,
-            K_max=cfg.K_max,
-            max_wrist_rotation=cfg.max_wrist_rotation,
+            self.model,
+            self.data,
+            self.config,
+            self.hand_body_id,
+            self.bottle_body_id,
+            self.traj_manager,
+            self.contact_manager,
+            self.push_controller
         )
 
-        # ==================== REWARD ====================
-        self.reward_manager = RewardManager(
-            path_tolerance=self.traj_manager.path_tolerance,
-            target_z=cfg.target_z,
+        # Reward computer
+        self.reward_computer = RewardComputer(
+            self.config,
+            self.traj_manager,
+            self.contact_manager,
+            self.bottle_body_id,
+            self.hand_body_id,
+            self.data
         )
 
-        # adaptive target_z
-        self.bottle_start_y = 0.2
+        # Episode logger
+        self.logger = EpisodeLogger()
+        self.push_controller.logger = self.logger
 
-        # Phase
-        self.in_approach = True
+        # Renderer
+        self.renderer = TrajectoryRenderer(self.model, self.data, self.render_mode)
 
-        # Action space: [forward_mod, lateral_mod, Kx, Ky]
-        self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-            dtype=np.float32
-        )
-
-        # Observation space
-        self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(cfg.obs_dim,), dtype=np.float32
-        )
-
-        # State
-        self.render_mode = render_mode
-        self.renderer = TrajectoryRenderer(self.model, self.data, render_mode)
-        self.episode_length = 0
-        self.prev_progress = 0.0
-
+    def _print_init_info(self):
+        """Print initialization information."""
         print(f"\n{'=' * 60}")
-        print("LOOKAHEAD TARGET CONCEPT (SUPERVISOR'S METHOD)")
+        print("FORCE-VELOCITY CONTROL")
         print(f"{'=' * 60}")
-        print("Push direction = Blended tangent + correction to LOOKAHEAD target")
-        print("Hand repositions to SIDE of bottle for correction")
-        print(f"Lookahead points: {cfg.lookahead_points}")
-        print(f"K range: [{cfg.K_min}, {cfg.K_max}] N/m")
-        print(f"Goal position: {self.goal_position}")
+        print(f"Action space: [vx, vy, vz, f]")
+        print(f"Control: τ = J^T × (Kp·Δp + Kd·Δv + Kf·ΔF) + τ_gravity")
+        print(f"Gains: Kp={self.config.Kp}, Kd={self.config.Kd}, Kf={self.config.Kf}")
+        print(f"Limits: v_max={self.config.v_max} m/s, f_max={self.config.f_max} N")
         print(f"{'=' * 60}")
-
-    # ==================================================================
-    #           CORE CONCEPT: Lookahead Target + Blended Direction
-    # ==================================================================
-
-    def _get_lookahead_target(self, bottle_xy):
-        return self.push_ctrl.get_lookahead_target(bottle_xy)
-
-    def _get_push_direction(self, bottle_xy):
-        return self.push_ctrl.get_push_direction(bottle_xy)
-
-    def _get_angle_error(self, bottle_xy):
-        return self.push_ctrl.get_angle_error(bottle_xy)
-
-    def _get_hand_target_position(self, bottle_xy):
-        return self.push_ctrl.get_hand_target_position(bottle_xy)
-
-    # ==================================================================
-    #           VELOCITY COMPUTATION
-    # ==================================================================
-
-    def _compute_approach_velocity(self):
-        return self.push_ctrl.compute_approach_velocity()
-
-    def _compute_push_velocity(self, action):
-        return self.push_ctrl.compute_push_velocity(action, self.episode_length, self.bottle_start_y)
-
-    def _get_bottle_tilt(self):
-        return self.push_ctrl.get_bottle_tilt()
-
-    def _check_stable(self):
-        return self.push_ctrl._check_stable()
-
-    def _cartesian_to_joint_velocity(self, cart_vel):
-        return self.push_ctrl.cartesian_to_joint_velocity(cart_vel)
-
-    # def _compute_wrist_rotation(self, bottle_xy):
-    #     """
-    #     Align gripper's -X axis with PUSH DIRECTION (to lookahead target).
-    #     This minimizes angle θ between force P and desired direction!
-    #     """
-    #     # Get push direction (to lookahead target)
-    #     push_dir, _, _ = self._get_push_direction(bottle_xy)
-    #
-    #     # Angle of push direction in world frame
-    #     push_angle = np.arctan2(push_dir[1], push_dir[0])
-    #
-    #     # Rotation needed to align gripper -X with push direction
-    #     alignment_rotation = push_angle - self.gripper_push_angle_at_home
-    #
-    #     # Normalize to [-π, π]
-    #     while alignment_rotation > np.pi:
-    #         alignment_rotation -= 2 * np.pi
-    #     while alignment_rotation < -np.pi:
-    #         alignment_rotation += 2 * np.pi
-    #
-    #     # Clamp to joint limits
-    #     target_rotation = np.clip(alignment_rotation, -self.max_wrist_rotation, self.max_wrist_rotation)
-    #
-    #     # Debug output
-    #     if self.episode_length % 100 == 0:
-    #         print(f"    Wrist: push_angle={np.degrees(push_angle):.1f}°, "
-    #               f"rotation={np.degrees(target_rotation):.1f}°")
-    #
-    #     return target_rotation
-
-    # ==================================================================
-    #                      TRAJECTORY
-    # ==================================================================
-
-
-
-    # ==================================================================
-    #                      CONTACT
-    # ==================================================================
-
-    def _get_contact_force(self):
-        return self.contact_manager.get_contact_force()
-
-    def _is_touching(self):
-        return self.contact_manager.is_touching()
-
-    # ==================================================================
-    #                      OBSERVATION
-    # ==================================================================
-
-    def _get_obs(self):
-        return self.obs_builder.get_obs(self.current_K, self.push_ctrl.wrist_offset)
-
-    # ==================================================================
-    #                      REWARD
-    # ==================================================================
-
-    def _get_reward(self):
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-        hand_pos = self.data.xpos[self.hand_body_id]
-
-        _, deviation_mag = self.traj_manager._get_path_deviation(bottle_xy)
-        progress = self.traj_manager._get_progress(bottle_xy)
-        tilt = self._get_bottle_tilt()
-        is_touching = self._is_touching()
-        force_mag = np.linalg.norm(self._get_contact_force())
-        dist_to_bottle = np.linalg.norm(hand_pos[:2] - bottle_xy)
-        angle_error = self._get_angle_error(bottle_xy)
-
-        # sync in_approach back to env after reward_manager may flip it
-        result = self.reward_manager.compute(
-            deviation_mag=deviation_mag,
-            progress=progress,
-            tilt=tilt,
-            is_touching=is_touching,
-            force_mag=force_mag,
-            dist_to_bottle=dist_to_bottle,
-            angle_error=angle_error,
-            hand_z=hand_pos[2],
-            K_avg=float(np.mean(self.current_K)),
-            is_settling=self.push_ctrl.is_settling,
-            episode_length=self.episode_length,
-        )
-        # One-way door: once in_approach is False it never goes back to True
-        self.in_approach = self.in_approach and self.reward_manager.in_approach
-        self.prev_progress = self.reward_manager.prev_progress
-        return result
-
-    # ==================================================================
-    #                      RESET / STEP
-    # ==================================================================
 
     def reset(self, seed=None, options=None):
+        """
+        Reset the environment for a new episode.
+
+        Args:
+            seed: Random seed
+            options: Optional dict with 'trajectory_type'
+
+        Returns:
+            observation: Initial observation
+            info: Empty dict
+        """
         super().reset(seed=seed)
 
-        mujoco.mj_resetDataKeyframe(self.model, self.data, self.home_key_id)
+        # Reset MuJoCo to push_start keyframe
+        mujoco.mj_resetDataKeyframe(self.model, self.data, self.push_start_key_id)
         mujoco.mj_forward(self.model, self.data)
 
-        self.current_qpos_target = self.data.qpos[7:14].copy()
-        self.data.ctrl[:7] = self.current_qpos_target
-
-        for _ in range(100):
-            self.data.ctrl[:7] = self.current_qpos_target
+        # Let simulation settle with gravity compensation
+        # This is important for torque control!
+        for _ in range(200):
+            # Apply gravity compensation to hold position
+            tau_gravity = self.data.qfrc_bias[6:13].copy()
+            self.data.ctrl[:7] = tau_gravity
             mujoco.mj_step(self.model, self.data)
 
+        # Get bottle start position
         bottle_start = self.data.xpos[self.bottle_body_id].copy()
 
-        # adaptive target-z
-        self.bottle_start_y = bottle_start[1]
+        # Determine trajectory type
+        traj_type = options["trajectory_type"] if options and "trajectory_type" in options else self.trajectory_type
 
-        traj_type = self.traj_manager.trajectory_type
-        if options and "trajectory_type" in options:
-            traj_type = options["trajectory_type"]
-
+        # Generate trajectory
         self.traj_manager.generate_trajectory(bottle_start[:2], traj_type)
 
-        self.episode_length = 0
-        self.push_ctrl.current_K[:] = [200.0, 200.0]
-        self.push_ctrl.is_settling = False
-        self.push_ctrl.settle_counter = 0
-        self.reward_manager.reset()
-        self.in_approach = self.reward_manager.in_approach
-        self.prev_progress = self.reward_manager.prev_progress
+        # Reset controller with current EE position
+        ee_pos = self.data.xpos[self.hand_body_id].copy()
+        self.push_controller.reset(ee_pos)
 
-        self.base_wrist_pos = self.current_qpos_target[6]
-        self.push_ctrl.wrist_offset = 0.0
+        # Reset reward computer
+        self.reward_computer.reset()
 
+        # Reset logger
         self.logger.reset()
 
+        # Reset episode state
+        self.episode_length = 0
+
+        # Print episode info
         print(f"\n{'=' * 50}")
         print(f"EPISODE: {traj_type}")
         print(f"Bottle start: ({bottle_start[0]:.2f}, {bottle_start[1]:.2f})")
-        print(f"Goal: ({self.goal_position[0]:.2f}, {self.goal_position[1]:.2f})")
-        print(f"Trajectory arc length: {self.traj_manager.total_arc_length:.3f}m")
-        print(f"Lookahead points: {self.lookahead_points}")
+        print(f"Hand start: ({ee_pos[0]:.2f}, {ee_pos[1]:.2f}, {ee_pos[2]:.2f})")
+        print(f"Goal: ({self.config.goal_position[0]:.2f}, {self.config.goal_position[1]:.2f})")
         print(f"{'=' * 50}")
 
-        return self._get_obs(), {}
+        self.episode_num += 1
+
+        return self.obs_builder.get_observation(), {}
 
     def step(self, action):
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
+        """
+        Execute one environment step.
 
-        if self.in_approach:
-            cart_vel, dist = self._compute_approach_velocity()
-            target_wrist_rotation = 0.0
-            if dist < 0.06 or self._is_touching():
-                self.in_approach = False
-                print(f"Step {self.episode_length}: → PUSH phase")
-        else:
-            cart_vel = self._compute_push_velocity(action)
-            # target_wrist_rotation = self._compute_wrist_rotaiton()
-            target_wrist_rotation = action[1] * self.max_wrist_rotation # RL controls wrist
+        Args:
+            action: RL action [vx, vy, wz, f] in [-1, 1]
 
-        q_dot = self._cartesian_to_joint_velocity(cart_vel)
+        Returns:
+            observation: New observation
+            reward: Reward for this step
+            terminated: Whether episode ended (success/failure)
+            truncated: Whether episode was cut short (time limit)
+            info: Additional information
+        """
+        tau = self.push_controller.compute_torque(action)
+        self.data.ctrl[:7] = tau
 
-        dt = 0.02
-
-        self.current_qpos_target[:6] = np.clip(
-            self.current_qpos_target[:6] + q_dot[:6] * dt,
-            self.act_low[:6], self.act_high[:6]
-        )
-
-        self.current_qpos_target[6] = self.push_ctrl.compute_wrist_joint_target(
-            target_wrist_rotation, self.base_wrist_pos,
-            self.max_wrist_rotation, self.act_low[6], self.act_high[6], dt
-        )
-
-        self.data.ctrl[:7] = self.current_qpos_target
-
-        for _ in range(20):
+        for _ in range(self.config.n_substeps):
             mujoco.mj_step(self.model, self.data)
 
-        # Logging
-        force = self._get_contact_force()
-        bottle_xy = self.data.xpos[self.bottle_body_id][:2]
-        _, dev = self.traj_manager._get_path_deviation(bottle_xy)
+        obs = self.obs_builder.get_observation()
+        
+        # Pass pure push logic to reward computer
+        reward, info = self.reward_computer.compute_reward()
 
-        self.logger.log_step(force, self.current_K, dev)
+        # Get positions and force for logging
+        hand_pos = self.data.xpos[self.hand_body_id].copy()
+        bottle_pos = self.data.xpos[self.bottle_body_id].copy()
+        force = self.contact_manager.get_contact_force()
 
-        obs = self._get_obs()
-        reward, info = self._get_reward()
+        # Enhanced debug print
+        if self.episode_length % 5 == 0:
+            self.debug_printer.print_step(
+                self.episode_length, hand_pos, bottle_pos, action, reward, info,
+                self.push_controller.last_push_dir,
+                self.push_controller.p_des,
+                self.push_controller.last_F_cmd,
+                self.push_controller.last_F_des,
+                self.push_controller.last_f_magnitude
+            )
+
+            # Log to CSV
+            self.step_logger.log(
+                self.total_steps, self.episode_length, self.episode_num,
+                hand_pos, bottle_pos, self.push_controller.p_des,
+                action, self.config,
+                self.push_controller.last_push_dir, 
+                self.push_controller.last_F_des,
+                self.push_controller.last_F_cmd, 
+                force,
+                reward, info
+            )
+
+        self.logger.log_step(
+            force=self.contact_manager.get_contact_force(),
+            deviation=info.get("deviation", 0.0),
+            velocity=np.array([action[0]*self.config.v_max, action[1]*self.config.v_max, 0]),
+            action=action,
+            tilt=info.get("bottle_tilt", 1.0)
+        )
+
+        # if self.episode_length % 50 == 0:
+        #     self._print_debug_info(info, action, reward)
+
+
         self.episode_length += 1
+        self.total_steps += 1
+        terminated = bool(
+            info.get("is_success") or 
+            info.get("bottle_fallen") or 
+            info.get("off_path") or
+            info.get("fled")
+        )
+        truncated = bool(self.episode_length >= self.config.max_episode_length)
 
-        terminated = bool(info.get("is_success") or info.get("bottle_fallen") or info.get("off_path"))
-        truncated = bool(self.episode_length >= self.max_episode_length)
+        if self.render_mode == "human":
+            self.render()
 
         return obs, reward, terminated, truncated, info
+    
+    # def _print_debug_info(self, info, action, reward):
+    #     """Print detailed debug information every N steps."""
+    #     progress = info.get("progress", 0.0)
+    #     deviation = info.get("deviation", 0.0)
+    #     tilt = info.get("bottle_tilt", 1.0)
+    #     force_mag = info.get("force_magnitude", 0.0)
+    #     is_touching = info.get("is_touching", False)
+        
+    #     # Get actual coordinates
+    #     hand_pos = self.data.xpos[self.hand_body_id]
+    #     bottle_pos = self.data.xpos[self.bottle_body_id]
+        
+    #     contact_str = "CONTACT" if is_touching else "NO CONTACT"
+        
+    #     print(f"Step {self.episode_length:4d} | {contact_str} | Step Reward: {reward:6.2f}")
+    #     print(f"  Hand Pos:   ({hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f})")
+    #     print(f"  Bottle Pos: ({bottle_pos[0]:.3f}, {bottle_pos[1]:.3f}, {bottle_pos[2]:.3f})")
+    #     # Action is [vx, vy, wz, f]
+    #     print(f"  NN Action:  vx={action[0]:5.2f}, vy={action[1]:5.2f}, wz={action[2]:5.2f}, f={action[3]:5.2f}")
+    #     print(f"  Status:     Prog={progress*100:5.1f}%, Dev={deviation*100:4.1f}cm, Tilt={tilt:.4f}, Force={force_mag:4.1f}N")
+    #     print("-" * 65)
 
     def render(self):
-        self.renderer.render(self.traj_manager.trajectory)
+        """Render the environment."""
+        if self.render_mode == "human":
+            self.renderer.render(self.traj_manager.trajectory)
 
     def close(self):
+        """Clean up resources."""
         self.renderer.close()
+        self.step_logger.close()
+
+    def get_episode_summary(self) -> dict:
+        """Get summary of the episode for logging."""
+        return self.logger.get_summary()

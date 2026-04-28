@@ -1,109 +1,189 @@
+# trajectory.py
+"""
+Trajectory Manager for Panda Push Environment.
+
+The new addition to this file is bascially is that it now uses central difference  instead of forward difference.
+This produces a smoother, less jittery tangent estimate, which matters for curved and s-curve trajectories where adjacent forward differences
+can change direction sharply between segments.
+
+forward difference: TANGENT = traj[idx+1] - traj[idx]
+central difference: TANGENT = traj[idx+1] - traj[idx-1]
+
+The central difference averages two adjacent segments, giving a tangent that better approximates the local direction of the underlying smooth
+curve. For straight trajectories the result is identical to forward difference (up to scaling, which doesn't matter after normalization).
+
+Generates and manages reference trajectories (straight, curved, s-curve).
+Provides trajectory-related computations for observation and reward.
+"""
+
 import numpy as np
-
+ 
+ 
 class TrajectoryManager:
-    """
-    Manages path generation and geometric trajectory calculations for the Panda push env.
-    """
-    def __init__(self, goal_position=np.array([0.4, -0.2]), path_tolerance=0.05):
-        self.trajectory = None
-        self.total_arc_length = 0.0
-        self.goal_position = goal_position
+    """Manages trajectory generation and trajectory-related computations."""
+ 
+    def __init__(self, goal_position, path_tolerance=0.05, lookahead_points=4):
+        self.goal_position = np.array(goal_position)
         self.path_tolerance = path_tolerance
+        self.lookahead_points = lookahead_points
+ 
+        self.trajectory = None
         self.trajectory_type = "straight"
-
-    def generate_trajectory(self, bottle_start_xy, traj_type="straight"):
-        """Generate trajectory from bottle start position to fixed goal"""
-        start = bottle_start_xy.copy()
-        n_points = 50
+        self.total_arc_length = 0.0
+ 
+    def generate_trajectory(self, bottle_start_xy, traj_type=None):
+        """Generate trajectory from bottle start to goal."""
+        if traj_type is not None:
+            self.trajectory_type = traj_type
+ 
+        start = np.array(bottle_start_xy)
         goal = self.goal_position.copy()
-
-        if traj_type == "straight":
+        n_points = 50
+ 
+        if self.trajectory_type == "straight":
             t = np.linspace(0, 1, n_points)
-            self.trajectory = np.outer(1 - t, start) + np.outer(t, goal)
-
-        elif traj_type == "curved":
+            traj = np.outer(1 - t, start) + np.outer(t, goal)
+            self.trajectory = traj.astype(np.float32)
+ 
+        elif self.trajectory_type == "curved":
             t = np.linspace(0, 1, n_points)
-            # Compute control point perpendicular to the start→goal line
-            chord = goal - start
-            perp = np.array([-chord[1], chord[0]])  # rotate 90°
-            perp = perp / (np.linalg.norm(perp) + 1e-6)
-            curve_offset = 0.15  # meters, how much the curve bows sideways
-            mid_point = (start + goal) / 2.0 + perp * curve_offset
+            mid_point = np.array([0.55, 0.0])
             x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * mid_point[0] + t ** 2 * goal[0]
             y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * mid_point[1] + t ** 2 * goal[1]
-            self.trajectory = np.stack([x, y], axis=1)
-
-        elif traj_type == "s_curve":
+            self.trajectory = np.stack([x, y], axis=1).astype(np.float32)
+ 
+        elif self.trajectory_type == "s_curve":
             t = np.linspace(0, 1, n_points)
-            wiggle_strength = np.sin(np.pi * t)  # Peaks at middle, zero at ends
-            # x = start[0] + 0.08 * np.sin(2 * np.pi * t) * wiggle_strength
-            x = start[0] + 0.04 * np.sin(2 * np.pi * t) * wiggle_strength
+            wiggle_strength = np.sin(np.pi * t)
+            x = start[0] + 0.08 * np.sin(2 * np.pi * t) * wiggle_strength
             y = start[1] + t * (goal[1] - start[1])
-            self.trajectory = np.stack([x, y], axis=1)
-
+            self.trajectory = np.stack([x, y], axis=1).astype(np.float32)
+ 
         else:
             t = np.linspace(0, 1, n_points)
-            self.trajectory = np.outer(1 - t, start) + np.outer(t, goal)
-
-        self.trajectory_type = traj_type
-        self.trajectory = self.trajectory.astype(np.float32)
+            traj = np.outer(1 - t, start) + np.outer(t, goal)
+            self.trajectory = traj.astype(np.float32)
+ 
         self._compute_arc_length()
-        return self.trajectory
-
-
+ 
     def _compute_arc_length(self):
-        """
-        Compute total arc length of trajectory
-        """
         if self.trajectory is None or len(self.trajectory) < 2:
             self.total_arc_length = 0.0
             return
         diffs = np.diff(self.trajectory, axis=0)
         self.total_arc_length = np.sum(np.linalg.norm(diffs, axis=1))
-
-
-    def _get_closest_point_on_trajectory(self, pos_xy):
-        """
-        Find closest point on trajectory to given position
-        """
+ 
+    def get_closest_point_on_trajectory(self, pos_xy):
+        """Returns (index, closest_point, arc_length_to_point)."""
         if self.trajectory is None:
             return 0, pos_xy.copy(), 0.0
+ 
         distances = np.linalg.norm(self.trajectory - pos_xy, axis=1)
-        idx = np.argmin(distances)
+        idx = int(np.argmin(distances))
         closest_pt = self.trajectory[idx].copy()
-        arc_len = np.sum(np.linalg.norm(np.diff(self.trajectory[:idx + 1], axis=0), axis=1)) if idx > 0 else 0.0
+ 
+        if idx > 0:
+            arc_len = np.sum(np.linalg.norm(np.diff(self.trajectory[:idx + 1], axis=0), axis=1))
+        else:
+            arc_len = 0.0
+ 
         return idx, closest_pt, arc_len
-
-
-    def _get_path_deviation(self, bottle_xy):
-        """
-        Get deviation vector from bottle to trajectory.
-        """
-        _, closest_pt, _ = self._get_closest_point_on_trajectory(bottle_xy)
+ 
+    def get_path_deviation(self, bottle_xy):
+        """Returns (deviation_vec, deviation_magnitude). Vec points bottle->trajectory."""
+        _, closest_pt, _ = self.get_closest_point_on_trajectory(bottle_xy)
         deviation_vec = closest_pt - bottle_xy
         return deviation_vec.astype(np.float32), float(np.linalg.norm(deviation_vec))
-
-
-    def _get_path_tangent(self, bottle_xy):
+ 
+    def get_path_tangent(self, bottle_xy):
         """
-        Get tangent vector at bottle's closest point on trajectory
+        Get tangent vector at bottle's closest trajectory point.
+ 
+        Uses CENTRAL DIFFERENCE (smoother for curved trajectories):
+            tangent = traj[idx+1] - traj[idx-1]
+ 
+        Falls back to one-sided differences at endpoints.
         """
         if self.trajectory is None or len(self.trajectory) < 2:
             return np.array([0.0, -1.0], dtype=np.float32)
-        idx, _, _ = self._get_closest_point_on_trajectory(bottle_xy)
-        if idx < len(self.trajectory) - 1:
-            tangent = self.trajectory[idx + 1] - self.trajectory[idx]
+ 
+        idx, _, _ = self.get_closest_point_on_trajectory(bottle_xy)
+        n = len(self.trajectory)
+ 
+        if idx == 0:
+            # Forward difference at start
+            tangent = self.trajectory[1] - self.trajectory[0]
+        elif idx >= n - 1:
+            # Backward difference at end
+            tangent = self.trajectory[n - 1] - self.trajectory[n - 2]
         else:
-            tangent = self.trajectory[idx] - self.trajectory[idx - 1]
+            # Central difference everywhere else
+            tangent = self.trajectory[idx + 1] - self.trajectory[idx - 1]
+ 
         norm = np.linalg.norm(tangent)
-        return (tangent / norm).astype(np.float32) if norm > 1e-6 else np.array([0.0, -1.0], dtype=np.float32)
-
-
-    def _get_progress(self, bottle_xy):
-        """
-        Get progress along trajectory (0.0 = start, 1.0 = goal)
-        """
+        if norm > 1e-6:
+            return (tangent / norm).astype(np.float32)
+        else:
+            return np.array([0.0, -1.0], dtype=np.float32)
+ 
+    def get_progress(self, bottle_xy):
+        """Returns progress in [0, 1]."""
         if self.total_arc_length < 1e-6:
             return 0.0
-        _, _, arc_len = self._get_closest_point_on_trajectory(bottle_xy)
+        _, _, arc_len = self.get_closest_point_on_trajectory(bottle_xy)
         return float(np.clip(arc_len / self.total_arc_length, 0.0, 1.0))
+ 
+    def get_lookahead_target(self, bottle_xy):
+        """
+        Get target point ahead of bottle's closest trajectory point.
+        Returns (target_point, target_index).
+        """
+        if self.trajectory is None or len(self.trajectory) < 2:
+            return self.goal_position.copy(), 0
+ 
+        idx, _, _ = self.get_closest_point_on_trajectory(bottle_xy)
+        target_idx = min(idx + self.lookahead_points, len(self.trajectory) - 1)
+        target_point = self.trajectory[target_idx].copy()
+ 
+        # Near end: snap to goal directly
+        if target_idx >= len(self.trajectory) - 2:
+            target_point = self.goal_position.copy()
+ 
+        return target_point, target_idx
+ 
+    def get_push_direction(self, bottle_xy):
+        """
+        Get blended push direction.
+ 
+        On trajectory   -> push along tangent
+        Off trajectory  -> push toward lookahead target (correction)
+        Smooth blend prevents oscillation.
+ 
+        Returns (push_direction, distance_to_target, target_point).
+        """
+        target_point, _ = self.get_lookahead_target(bottle_xy)
+        _, deviation_mag = self.get_path_deviation(bottle_xy)
+ 
+        # Vector from bottle to lookahead target
+        to_target = target_point - bottle_xy
+        distance = float(np.linalg.norm(to_target))
+ 
+        if distance > 1e-6:
+            correction_dir = to_target / distance
+        else:
+            correction_dir = self.get_path_tangent(bottle_xy)
+ 
+        tangent_dir = self.get_path_tangent(bottle_xy)
+ 
+        # Blend: 0 (pure tangent) when dev<0.5cm, 1 (pure correction) when dev>2.5cm
+        blend = float(np.clip((deviation_mag - 0.005) / 0.02, 0.0, 1.0))
+ 
+        push_direction = (1.0 - blend) * tangent_dir + blend * correction_dir
+ 
+        norm = np.linalg.norm(push_direction)
+        if norm > 1e-6:
+            push_direction = push_direction / norm
+        else:
+            push_direction = tangent_dir
+ 
+        return push_direction.astype(np.float32), distance, target_point
