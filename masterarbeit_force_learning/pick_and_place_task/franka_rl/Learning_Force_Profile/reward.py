@@ -34,11 +34,11 @@ class RewardComputer:
         self.hand_body_id = hand_body_id
         self.data = data
         self.prev_progress = 0.0
-        self.prev_force = np.zeros(3)
+        # self.prev_force = np.zeros(3)
 
     def reset(self):
         self.prev_progress = 0.0
-        self.prev_force = np.zeros(3)
+        # self.prev_force = np.zeros(3)
 
     def compute_reward(self):
         info = {"is_success": False}
@@ -110,22 +110,16 @@ class RewardComputer:
                 r_contact -= 2.0
 
         # ============================================================
-        # 5. SMOOTHNESS
-        # ============================================================
-        force_change = np.linalg.norm(force - self.prev_force)
-        r_smoothness = -self.config.w_force_smoothness * force_change
-
-        # ============================================================
-        # 6. ALIGNMENT
+        # 5. ALIGNMENT (Force in the direction of the path)
         # ============================================================
         f_along_tangent = float(np.dot(f_robot_on_bottle, push_dir_3d))
-        f_along_tangent_clipped = float(
-            np.clip(f_along_tangent, 0.0, self.config.target_force)
-        )
+        
+        # Cap the rewardable force at 5.0N so the agent doesn't smash it for points
+        f_along_tangent_clipped = float(np.clip(f_along_tangent, 0.0, 5.0))
         r_alignment = self.config.w_alignment * f_along_tangent_clipped
 
         # ============================================================
-        # 7. POSITION — CHANGED TO A PENALTY!
+        # 6. POSITION — CHANGED TO A PENALTY!
         # Max reward is 0.0 (perfectly aligned). Penalizes being skewed.
         # ============================================================
         bottle_to_flange = hand_xy - bottle_xy
@@ -146,7 +140,7 @@ class RewardComputer:
         # TOTAL + TIME PENALTY FIX
         # ============================================================
         total_reward = (r_progress + r_deviation + r_stability +
-                        r_contact + r_smoothness + r_alignment + r_position)
+                        r_contact + r_alignment + r_position)
         
         # ACTUALLY APPLY THE TIME PENALTY
         total_reward -= self.config.time_penalty
@@ -155,7 +149,6 @@ class RewardComputer:
         info['r_deviation'] = r_deviation
         info['r_stability'] = r_stability
         info['r_contact'] = r_contact
-        info['r_smoothness'] = r_smoothness
         info['r_alignment'] = r_alignment
         info['r_position'] = r_position
         info['alignment'] = alignment
@@ -182,7 +175,7 @@ class RewardComputer:
             info["off_path"] = True
 
         self.prev_progress = progress
-        self.prev_force = force.copy()
+        # self.prev_force = force.copy()
 
         info.update({
             "progress": progress,

@@ -116,7 +116,7 @@ from env import PandaPushTrajectoryEnv
 # MODEL_NAME = "trained_model_curved_r_angle_1.zip"
 
 # MODEL_NAME = "trained_model_s_curve_r_angle_3.zip"
-MODEL_NAME = "trained_model_straight_only_push_v11.zip"
+MODEL_NAME = "trained_model_straight_only_push_v14.zip"
 
 TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization

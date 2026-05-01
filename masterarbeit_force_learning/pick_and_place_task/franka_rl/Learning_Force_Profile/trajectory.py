@@ -1,5 +1,6 @@
-# trajectory.py
 """
+trajectory.py
+
 Trajectory Manager for Panda Push Environment.
 
 The new addition to this file is bascially is that it now uses central difference  instead of forward difference.

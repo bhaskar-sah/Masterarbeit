@@ -1,17 +1,17 @@
-# env.py
 """
-Panda Push Trajectory Environment with Learned Force Profile (Pure RL).
+env.py
+Panda Push Trajectory Environment with Pure Impedance Control.
 
-This environment implements Marko's force-velocity control approach where:
-    - RL learns: velocity (vx, vy, vz) and force magnitude (f)
-    - Controller: Converts these to joint torques via J^T × F_cmd + τ_gravity
+This environment implements a velocity-based control approach where:
+    - RL learns: planar velocity and yaw velocity (vx, vy, wz)
+    - Controller: Converts these to a moving virtual target (p_des).
+    - Physics: Impedance control generates force naturally based on position error.
 
-Action space: [vx, vy, vz, f] - all in [-1, 1]
-    - vx, vy, vz: Desired end-effector velocity (scaled to ±v_max)
-    - f: Push force magnitude (scaled to [0, f_max])
+Action space: [vx, vy, wz] - all in [-1, 1]
+    - vx, vy: Desired planar end-effector velocity (scaled to ±v_max)
+    - wz: Desired yaw angular velocity (scaled to ±w_max)
 
-The robot pushes a bottle along a predefined trajectory using
-direct torque control with a PD + Force controller and gravity compensation.
+The robot pushes a bottle along a predefined trajectory.
 """
 
 import gymnasium as gym
@@ -69,7 +69,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(4,),
+            shape=(3,),
             dtype=np.float32
         )
 
@@ -176,12 +176,12 @@ class PandaPushTrajectoryEnv(gym.Env):
     def _print_init_info(self):
         """Print initialization information."""
         print(f"\n{'=' * 60}")
-        print("FORCE-VELOCITY CONTROL")
+        print("PURE IMPEDANCE CONTROL (VELOCITY ONLY)")
         print(f"{'=' * 60}")
-        print(f"Action space: [vx, vy, vz, f]")
-        print(f"Control: τ = J^T × (Kp·Δp + Kd·Δv + Kf·ΔF) + τ_gravity")
-        print(f"Gains: Kp={self.config.Kp}, Kd={self.config.Kd}, Kf={self.config.Kf}")
-        print(f"Limits: v_max={self.config.v_max} m/s, f_max={self.config.f_max} N")
+        print(f"Action space: [vx, vy, wz]") # Removed f
+        print(f"Control: τ = J^T × (Kp·Δp + Kd·Δv) + τ_gravity") # Removed Kf·ΔF
+        print(f"Gains: Kp={self.config.Kp}, Kd={self.config.Kd}") # Removed Kf
+        print(f"Limits: v_max={self.config.v_max} m/s") # Removed f_max
         print(f"{'=' * 60}")
 
     def reset(self, seed=None, options=None):
@@ -281,8 +281,8 @@ class PandaPushTrajectoryEnv(gym.Env):
                 self.push_controller.last_push_dir,
                 self.push_controller.p_des,
                 self.push_controller.last_F_cmd,
-                self.push_controller.last_F_des,
-                self.push_controller.last_f_magnitude
+                #self.push_controller.last_F_des,
+                # self.push_controller.last_f_magnitude
             )
 
             # Log to CSV
@@ -291,7 +291,7 @@ class PandaPushTrajectoryEnv(gym.Env):
                 hand_pos, bottle_pos, self.push_controller.p_des,
                 action, self.config,
                 self.push_controller.last_push_dir, 
-                self.push_controller.last_F_des,
+                #self.push_controller.last_F_des,
                 self.push_controller.last_F_cmd, 
                 force,
                 reward, info

@@ -1,5 +1,5 @@
 """
-observation.py  (updated)
+observation.py
 
 CHANGES from previous version:
   1. contact_force now stored as f_robot_on_bottle (sign-flipped from raw

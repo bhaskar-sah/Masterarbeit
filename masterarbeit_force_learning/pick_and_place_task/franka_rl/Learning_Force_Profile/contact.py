@@ -1,5 +1,6 @@
 # contact.py
 """
+contact.py
 Contact Manager for Panda Push Environment.
 
 Handles contact detection and force computation between robot and bottle.
