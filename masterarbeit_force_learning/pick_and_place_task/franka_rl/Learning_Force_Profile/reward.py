@@ -133,8 +133,34 @@ class RewardComputer:
             side_dot = 0.0
             position_alignment = 0.0
             
-        # FIX: Subtract 1.0 so the best score is 0, and worse alignments are negative
-        r_position = self.config.w_position * (position_alignment - 1.0)
+        # # FIX: Subtract 1.0 so the best score is 0, and worse alignments are negative
+        # r_position = self.config.w_position * (position_alignment - 1.0)
+
+        # ============================================================
+        # 7. POSITION — DYNAMIC CROSS-TRACK TARGETING
+        # ============================================================
+        # 1. We know the exact direction we want the bottle to go
+        push_dir_2d_unit = push_dir_2d / (np.linalg.norm(push_dir_2d) + 1e-6)
+        
+        # 2. Calculate the exact IDEAL hand position (opposite the push direction)
+        # Assuming bottle radius is roughly 3.5cm (0.035m)
+        bottle_radius = 0.039
+        ideal_hand_xy = bottle_xy - (push_dir_2d_unit * bottle_radius)
+        
+        # 3. Calculate how far the actual hand is from this ideal spot
+        hand_position_error = np.linalg.norm(hand_xy - ideal_hand_xy)
+
+        # Give the agent a 2cm "safe zone" behind the bottle where there is ZERO penalty.
+        # This stops the agent from micro-panicking.
+        error_outside_safezone = max(hand_position_error - 0.02, 0.0)
+        
+        # 4. Penalize the agent for being far from the ideal spot
+        # Subtracting an offset so it only penalizes if it's way off center
+        # r_position = -self.config.w_position * max(hand_position_error - 0.02, 0.0)
+
+        # Use a QUADRATIC penalty instead of linear. 
+        # Being 1mm outside the zone is a tiny penalty. Being 5cm outside is a massive penalty.
+        r_position = -self.config.w_position * (error_outside_safezone ** 2)
 
         # ============================================================
         # TOTAL + TIME PENALTY FIX

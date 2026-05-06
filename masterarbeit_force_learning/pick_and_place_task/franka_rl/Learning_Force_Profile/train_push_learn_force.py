@@ -36,9 +36,9 @@ ALGORITHM = "PPO"
 TRAJECTORY_TYPE = "straight"
 # TRAJECTORY_TYPE = "curved"
 # TRAJECTORY_TYPE = "s_curve"
-TOTAL_TIMESTEPS = 1_000_000
+TOTAL_TIMESTEPS = 2_500_000
 # MODEL_NAME = f"push_trajectory_{TRAJECTORY_TYPE}_02"
-MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v14"
+MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v18"
 # MODEL_NAME = f"push_learn_force_impedance_9_orientation_added_{TRAJECTORY_TYPE}_01"
 
 
@@ -54,7 +54,8 @@ print("="*60)
 
 # Create training environment
 env = PandaPushTrajectoryEnv(
-    render_mode="human",
+    # render_mode="human",
+    render_mode=None,
     trajectory_type=TRAJECTORY_TYPE
 )
 print("Environment Created!!!!!")
@@ -74,7 +75,8 @@ except Exception as e:
 
 # Create evaluation environment (separate from training)
 eval_env = PandaPushTrajectoryEnv(
-    render_mode="human",
+    # render_mode="human",
+    render_mode=None,
     trajectory_type=TRAJECTORY_TYPE
 )
 eval_env = Monitor(eval_env)
@@ -112,9 +114,9 @@ checkpoint_callback = CheckpointCallback(
 eval_callback = EvalCallback(
     eval_env,
     # best_model_save_path=os.path.join(save_folder, "best_model"),
-    best_model_save_path=os.path.join(save_folder, f"trained_model_{TRAJECTORY_TYPE}_only_push_v13"),
+    best_model_save_path=os.path.join(save_folder, f"trained_model_{TRAJECTORY_TYPE}_only_push_v18"),
     # log_path=os.path.join(save_folder, "eval_logs"),
-    log_path=os.path.join(save_folder, f"eval_logs_trained_model_{TRAJECTORY_TYPE}_only_push_v13"),
+    log_path=os.path.join(save_folder, f"eval_logs_trained_model_{TRAJECTORY_TYPE}_only_push_v18"),
     eval_freq=20000,
     n_eval_episodes=5,
     deterministic=True,
@@ -128,8 +130,8 @@ print("-"*60)
 
 model.learn(
     total_timesteps=TOTAL_TIMESTEPS,
-    # callback=[checkpoint_callback, eval_callback],
-    callback=[checkpoint_callback],
+    callback=[checkpoint_callback, eval_callback],
+    # callback=[checkpoint_callback],
 
     progress_bar=True
 )
@@ -169,5 +171,5 @@ eval_env.close()
 print("\n" + "="*60)
 print(f"Training complete!")
 print(f"Model saved to: {model_save_path}.zip")
-print(f"Best model saved to: {save_folder}/best_trained_model_{TRAJECTORY_TYPE}_only_push_v13/")
+print(f"Best model saved to: {save_folder}/best_trained_model_{TRAJECTORY_TYPE}_only_push_v18/")
 print("="*60)

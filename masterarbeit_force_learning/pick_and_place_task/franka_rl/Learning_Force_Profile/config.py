@@ -16,8 +16,8 @@ class EnvConfig:
     # ============================================================
     # CONTROLLER GAINS
     # ============================================================
-    Kp: float = 100.0
-    Kd: float = 20.0
+    Kp: float = 150.0 # was 100.0
+    Kd: float = 30.0 # was 20.0
     Kf: float = 0.0 # was 0.5 # Force feedback gain: kept for backward compat, unused in pure motion control
 
     Kp_rot: float = 10.0
@@ -25,7 +25,7 @@ class EnvConfig:
 
     # Cap on p_error magnitude (m). Prevents position term from dominating
     # F_cmd when p_des races ahead of actual EE.
-    p_error_max = 0.03 # 0.03  # 3 cm
+    p_error_max = 0.03 # was 0.03 # 0.03  # 3 cm
 
     # ============================================================
     # ACTION LIMITS
@@ -70,7 +70,7 @@ class EnvConfig:
     w_force: float = 0.05               # legacy
     target_force: float = 5.0
     w_alignment: float = 0.5            # was 0.3
-    w_position: float = 1.0             # was 0.5
+    w_position: float = 15.0 # was 1.0             # was 0.5
 
     time_penalty: float = 3.0 # was 0.5 # was 0.005
 
