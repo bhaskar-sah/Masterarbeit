@@ -26,13 +26,14 @@ import numpy as np
 
 class RewardComputer:
     def __init__(self, config, traj_manager, contact_manager,
-                 bottle_body_id, hand_body_id, data):
+                 bottle_body_id, hand_body_id, data, push_controller):
         self.config = config
         self.traj_manager = traj_manager
         self.contact_manager = contact_manager
         self.bottle_body_id = bottle_body_id
         self.hand_body_id = hand_body_id
         self.data = data
+        self.push_controller = push_controller
         self.prev_progress = 0.0
         # self.prev_force = np.zeros(3)
 
@@ -92,10 +93,10 @@ class RewardComputer:
         # ============================================================
         # 3. STABILITY
         # ============================================================
-        if tilt > 0.97:
+        if tilt > 0.90: # was 0.97 - more flexibility
             r_stability = 0.0
         else:
-            r_stability = -15.0 * (1.0 - tilt)
+            r_stability = -5.0 * (1.0 - tilt) # Reduced penalty multiplier
 
         # ============================================================
         # 4. CONTACT
@@ -116,7 +117,10 @@ class RewardComputer:
         
         # Cap the rewardable force at 5.0N so the agent doesn't smash it for points
         f_along_tangent_clipped = float(np.clip(f_along_tangent, 0.0, 5.0))
-        r_alignment = self.config.w_alignment * f_along_tangent_clipped
+        if progress_delta > 0.0001:
+            r_alignment = self.config.w_alignment * f_along_tangent_clipped
+        else:
+            r_alignment = 0.0
 
         # ============================================================
         # 6. POSITION — CHANGED TO A PENALTY!
@@ -163,10 +167,28 @@ class RewardComputer:
         r_position = -self.config.w_position * (error_outside_safezone ** 2)
 
         # ============================================================
+        # 8. ORIENTATION ALIGNMENT (Wrist Yaw)
+        # Penalize the agent if the pushing face is not aligned with the path
+        # ============================================================
+        flange_axis_3d = self.push_controller.get_flange_axis_world()
+        flange_axis_2d = flange_axis_3d[:2]
+        
+        if np.linalg.norm(flange_axis_2d) > 1e-6:
+            flange_axis_2d = flange_axis_2d / np.linalg.norm(flange_axis_2d)
+            # 1.0 = perfectly aligned, 0.0 = 90 degrees off
+            cos_flange_align = float(np.dot(flange_axis_2d, push_dir_2d_unit))
+        else:
+            cos_flange_align = 0.0
+
+        # Quadratic penalty so small deviations are fine, but large ones hurt
+        r_orientation = -1.0 * ((1.0 - cos_flange_align) ** 2) # was -1.0
+        
+
+        # ============================================================
         # TOTAL + TIME PENALTY FIX
         # ============================================================
         total_reward = (r_progress + r_deviation + r_stability +
-                        r_contact + r_alignment + r_position)
+                        r_contact + r_alignment + r_position + r_orientation)
         
         # ACTUALLY APPLY THE TIME PENALTY
         total_reward -= self.config.time_penalty

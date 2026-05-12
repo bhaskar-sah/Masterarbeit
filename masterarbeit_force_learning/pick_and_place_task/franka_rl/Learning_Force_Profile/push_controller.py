@@ -41,7 +41,7 @@ import mujoco
 # Set from visualize_flange.py output
 # ============================================================
 FLANGE_PUSH_AXIS_LOCAL = 0   # 0=x, 1=y, 2=z
-FLANGE_PUSH_SIGN = -1        # +1 or -1
+FLANGE_PUSH_SIGN = -1         # Positive X-axis pushes the bottle # +1 (positive x axis) or -1 (negative x-axis)
 
 
 class PushController:
@@ -72,27 +72,16 @@ class PushController:
         self.dt = config.dt
         self.control_dt = config.control_dt
 
-        self.p_des = None
-        self.yaw_des = None
         self.n_joints = 7
-        self.qvel_start = 6 # set to 0 for no-bottle test, 6 with bottle
+        self.qvel_start = 6  # set to 0 for no-bottle test, 6 with bottle
         self.logger = None
 
         # Debug
         self.last_F_cmd = np.zeros(3)
-        # self.last_F_des = np.zeros(3)
-        # self.last_f_magnitude = 0.0
         self.last_push_dir = np.zeros(2)
-        self.last_yaw_des = 0.0
-        self.last_flange_axis_world = np.zeros(3)
 
-    def reset(self, initial_ee_pos=None):
-        if initial_ee_pos is not None:
-            self.p_des = initial_ee_pos.copy()
-        else:
-            self.p_des = self.get_ee_position().copy()
-        R_initial = self.get_ee_orientation()
-        self.yaw_des = float(np.arctan2(R_initial[1, 0], R_initial[0, 0]))
+    def reset(self):
+        pass  # no state to reset — pure velocity control has no integrators
 
     # ---------- kinematics (SITE-BASED) ----------
     def get_ee_position(self):
@@ -100,6 +89,8 @@ class PushController:
 
     def get_ee_orientation(self):
         return self.data.site_xmat[self.gripper_site_id].reshape(3, 3).copy()
+    
+    # transform the base frame to the ee frame. start with the velocity. 
 
     def get_ee_velocity(self):
         jacp = np.zeros((3, self.model.nv))
@@ -152,95 +143,81 @@ class PushController:
 
     def compute_torque(self, action, tilt=None):
         # =======================================================================================
-        # Action is now 3D: [vx, vy, wz]
+        # Action: [vx, vy, wz] - Strictly in the EE frame (pure velocity control)
         # =======================================================================================
-        v_des = np.array([action[0] * self.v_max,
-                          action[1] * self.v_max,
-                          0.0])
         wz_cmd = action[2] * self.w_max
- 
+
         # =======================================================================================
-        # 2. INTEGRATE v -> p_des
+        # 1. CURRENT STATE (Base Frame)
         # =======================================================================================
-        if self.p_des is None:
-            self.p_des = self.get_ee_position()
-        self.p_des = self.p_des + v_des * self.control_dt
-        self.p_des[0] = np.clip(self.p_des[0], 0.0, 0.7)
-        self.p_des[1] = np.clip(self.p_des[1], -0.6, 0.6)
-        self.p_des[2] = 0.84  # locked z height
- 
+        v_current_base = self.get_ee_velocity()
+        omega_current_base = self.get_ee_angular_velocity()
+        R_curr = self.get_ee_orientation()  # 3x3 rotation matrix from EE to Base
+
         # =======================================================================================
-        # 3. INTEGRATE wz -> yaw_des
+        # 2. DESIRED VELOCITY (EE Frame)
+        # action[0] (vx) = push forward out of the flange
+        # action[1] (vy) = slide laterally left/right
         # =======================================================================================
-        self.yaw_des += wz_cmd * self.control_dt
-        self.yaw_des = (self.yaw_des + np.pi) % (2 * np.pi) - np.pi
- 
-        c, s = np.cos(self.yaw_des), np.sin(self.yaw_des)
-        R_desired = np.array([
-            [c, -s, 0.0],
-            [s,  c, 0.0],
-            [0.0, 0.0, -1.0],
+        v_des_ee = np.array([
+            action[0] * self.v_max * FLANGE_PUSH_SIGN,
+            action[1] * self.v_max,
+            0.0
         ])
- 
+
         # =======================================================================================
-        # 4. CURRENT STATE
+        # 3. FRAME CONSISTENCY
+        # Convert base velocity to EE frame to compute error in local coordinates
         # =======================================================================================
+        v_current_ee = R_curr.T @ v_current_base
+
+        # =======================================================================================
+        # 4. FORCE COMMAND
+        # XY: Pure velocity damping in the EE frame, as requested by supervisor
+        # Z:  Position hold (controller-managed in base frame to prevent dropping)
+        # =======================================================================================
+        F_cmd_ee = self.Kd * (v_des_ee - v_current_ee)
+        
+        # Rotate the locally-computed force command back to the Base frame
+        F_cmd_base = R_curr @ F_cmd_ee
+
+        # Apply Z-axis position control directly in the base frame since Z is universally "up"
         p_current = self.get_ee_position()
-        v_current = self.get_ee_velocity()
-        omega_current = self.get_ee_angular_velocity()
-        R_current = self.get_ee_orientation()
- 
-        # =======================================================================================
-        # 5. POSITION CONTROL ONLY (no F_des, no force feedback)
-        # =======================================================================================
-        p_error = self.p_des - p_current
- 
-        # Cap XY error magnitude (Z stays raw)
-        xy_error = p_error[:2]
-        xy_error_mag = np.linalg.norm(xy_error)
-        limit = self.config.p_error_max
-        if xy_error_mag > limit:
-            xy_error = xy_error * (limit / xy_error_mag)
-        p_error_capped = np.array([xy_error[0], xy_error[1], p_error[2]])
- 
-        v_error = v_des - v_current
- 
-        # PURE PD control law — Marko's correction
-        F_cmd = self.Kp * p_error_capped + self.Kd * v_error
- 
-        F_cmd_mag = np.linalg.norm(F_cmd)
+        F_cmd_base[2] = self.Kp * (0.84 - p_current[2]) - self.Kd * v_current_base[2]
+
+        # Clip force
+        F_cmd_mag = np.linalg.norm(F_cmd_base)
         if F_cmd_mag > 100.0:
-            F_cmd = F_cmd / F_cmd_mag * 100.0
- 
+            F_cmd_base = F_cmd_base / F_cmd_mag * 100.0
+
         # =======================================================================================
-        # 6. ORIENTATION
+        # 5. ORIENTATION COMMAND (Pure angular velocity damping)
         # =======================================================================================
-        theta_error = self.compute_orientation_error(R_current, R_desired)
-        tau_rot_cmd = self.Kp_rot * theta_error - self.Kd_rot * omega_current
+        omega_des_ee = np.array([0.0, 0.0, wz_cmd])
+        omega_des_base = R_curr @ omega_des_ee  # Convert desired angular velocity to base frame
+
+        tau_rot_cmd = self.Kd_rot * (omega_des_base - omega_current_base)
         tau_rot_mag = np.linalg.norm(tau_rot_cmd)
         if tau_rot_mag > 10.0:
             tau_rot_cmd = tau_rot_cmd / tau_rot_mag * 10.0
- 
-        # 7. JOINT TORQUES
-        wrench_cmd = np.concatenate([F_cmd, tau_rot_cmd])
+
+        # =======================================================================================
+        # 6. JOINT TORQUES
+        # =======================================================================================
+        wrench_cmd = np.concatenate([F_cmd_base, tau_rot_cmd])
         J_full = self.get_jacobian_full()
         tau_task = J_full.T @ wrench_cmd
         tau = tau_task + self.get_gravity_compensation()
- 
+
         tau_max = np.array([87, 87, 87, 87, 12, 12, 12])
         tau = np.clip(tau, -tau_max, tau_max)
- 
+
+        # =======================================================================================
         # Debug storage
-        self.last_F_cmd = F_cmd.copy()
-        self.last_yaw_des = self.yaw_des
-        # flange_axis_world = R_current[:, FLANGE_PUSH_AXIS_LOCAL] * FLANGE_PUSH_SIGN
-        # flange_axis_world[2] = 0.0
-        # norm = np.linalg.norm(flange_axis_world)
-        # if norm > 1e-6:
-        #     flange_axis_world /= norm
-        # self.last_flange_axis_world = flange_axis_world.copy()
+        # =======================================================================================
+        self.last_F_cmd = F_cmd_base.copy()
         bottle_xy = self.data.xpos[self.bottle_body_id][:2]
         push_dir_2d, _, _ = self.traj_manager.get_push_direction(bottle_xy)
         self.last_push_dir = push_dir_2d.copy()
- 
+
         return tau.astype(np.float32)

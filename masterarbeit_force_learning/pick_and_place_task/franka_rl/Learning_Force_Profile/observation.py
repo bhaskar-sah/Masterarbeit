@@ -139,6 +139,27 @@ class ObservationBuilder:
         # ---- NEW: future push direction (anticipatory) ----
         future_push_dir = self._get_future_push_dir(bottle_xy).astype(np.float32)
 
+        # =====================================================================
+        # FRAME TRANSFORMATION FOR RL AGENT (EGO-CENTRIC)
+        # =====================================================================
+        # The agent acts in the local End-Effector frame. We must rotate the 
+        # world-frame trajectory vectors into the EE frame so the agent knows
+        # where the trajectory is relative to its current gripper orientation.
+        
+        R_world_to_ee = ee_mat.T 
+
+        # 1. Transform Push Direction to EE Frame
+        push_dir_3d = np.array([push_dir[0], push_dir[1], 0.0])
+        push_dir_ee = (R_world_to_ee @ push_dir_3d)[:2].astype(np.float32)
+
+        # 2. Transform Deviation Vector to EE Frame
+        dev_vec_3d = np.array([deviation_vec[0], deviation_vec[1], 0.0])
+        deviation_vec_ee = (R_world_to_ee @ dev_vec_3d)[:2].astype(np.float32)
+
+        # 3. Transform Future Push Direction to EE Frame
+        future_push_dir_3d = np.array([future_push_dir[0], future_push_dir[1], 0.0])
+        future_push_dir_ee = (R_world_to_ee @ future_push_dir_3d)[:2].astype(np.float32)
+
         # Build observation
         obs = np.concatenate([
             qpos,                                            # 7
@@ -148,9 +169,9 @@ class ObservationBuilder:
             bottle_pos,                                      # 3
             dir_to_bottle.astype(np.float32),                # 2
             np.array([dist_to_bottle], dtype=np.float32),    # 1
-            push_dir.astype(np.float32),                     # 2
+            push_dir_ee,                                     # 2
             np.array([dist_to_target], dtype=np.float32),    # 1
-            deviation_vec.astype(np.float32),                # 2
+            deviation_vec_ee,                                # 2
             np.array([deviation_mag], dtype=np.float32),     # 1
             np.array([progress], dtype=np.float32),          # 1
             f_robot_on_bottle.astype(np.float32),            # 3  (sign-corrected)
@@ -161,7 +182,7 @@ class ObservationBuilder:
             cos_alignment_arr,                               # 1
             side_dot_arr,                                    # 1
             cos_force_alignment_arr,                         # 1  (NEW)
-            future_push_dir,                                 # 2  (NEW)
+            future_push_dir_ee,                              # 2  (NEW)
         ])  # Total: 48
 
         return obs.astype(np.float32)
@@ -191,6 +212,6 @@ Index   | Dim | Name                  | Description
 43      | 1   | cos_alignment         | cos(flange_axis, push_dir)
 44      | 1   | side_dot              | dot(bottle->flange, push_dir); -1=behind
 45      | 1   | cos_force_alignment   | cos(force, push_dir)        [NEW]
-46-47   | 2   | future_push_dir       | Push dir 8 points further   [NEW]
+46-47   | 2   | future_push_dir_ee       | Push dir 8 points further   [NEW]
 TOTAL: 48
 """

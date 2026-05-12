@@ -132,10 +132,10 @@
 
     <body name="task_table" pos="0.5 0 0.4">
         <geom type="box" size="0.6 0.6 0.4" material="table_mat" rgba="0.76 0.60 0.42 1"
-            friction="0.8 0.005 0.0001"/> <!-- # friction="0.8 0.005 0.0001"-->
+            friction="0.2 0.005 0.0001"/> <!-- # friction="0.8 0.005 0.0001"-->
     </body>
 
-    <!-- Bottle specifications: Height 18 cm || Width 8cm-->
+    <!-- Bottle specifications: radius 0.04 half-height 0.06 so double Height 12 cm || Diameter 8cm-->
     <body name="bottle" pos="0.2 0.0 0.805">
       <joint name="bottle_joint" type="free" damping="0.01" />
 
@@ -345,9 +345,12 @@
 
     <!-- NEW: Push phase starting position (matches reach end condition) -->
     <key name="push_start"
-         qpos="0.400000 0.200000 0.805000 1.000000 0.000000 0.000000 0.000000 0.307175 0.745994 0.107003 -1.773306 -0.123545 2.512819 2.842014 0.00 0.00"
+         qpos="0.400000 0.200000 0.805000 1.000000 0.000000 0.000000 0.000000 0.304065 0.739362 0.111542 -1.786717 -0.128971 2.519045 -0.347458 0.00 0.00"
          ctrl="0 0 0 0 0 0 0 0"/>
   </keyframe>
+  <!-- qpos s_curve -->
+  <!-- qpos="0.400000 0.200000 0.805000 1.000000 0.000000 0.000000 0.000000 0.307175 0.745994 0.107003 -1.773306 -0.123545 2.512819 2.842014 0.00 0.00" -->
+  <!-- qpos home -->
   <!-- qpos="0.400221 0.199769 0.802149 0.999831 0.018132 0.001075 -0.002769 0.285311 0.717482 0.134904 -1.741957 -0.203183 2.383109 -0.208838 0.0 0.0" -->
 
   <contact>

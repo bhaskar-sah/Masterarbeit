@@ -163,7 +163,8 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.contact_manager,
             self.bottle_body_id,
             self.hand_body_id,
-            self.data
+            self.data,
+            self.push_controller
         )
 
         # Episode logger
@@ -219,9 +220,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Generate trajectory
         self.traj_manager.generate_trajectory(bottle_start[:2], traj_type)
 
-        # Reset controller with current EE position
-        ee_pos = self.data.xpos[self.hand_body_id].copy()
-        self.push_controller.reset(ee_pos)
+        # Reset controller (pure velocity control — no state to initialize)
+        self.push_controller.reset()
 
         # Reset reward computer
         self.reward_computer.reset()
@@ -236,7 +236,6 @@ class PandaPushTrajectoryEnv(gym.Env):
         print(f"\n{'=' * 50}")
         print(f"EPISODE: {traj_type}")
         print(f"Bottle start: ({bottle_start[0]:.2f}, {bottle_start[1]:.2f})")
-        print(f"Hand start: ({ee_pos[0]:.2f}, {ee_pos[1]:.2f}, {ee_pos[2]:.2f})")
         print(f"Goal: ({self.config.goal_position[0]:.2f}, {self.config.goal_position[1]:.2f})")
         print(f"{'=' * 50}")
 
@@ -274,27 +273,29 @@ class PandaPushTrajectoryEnv(gym.Env):
         bottle_pos = self.data.xpos[self.bottle_body_id].copy()
         force = self.contact_manager.get_contact_force()
 
+        # Fetch actual velocity from the controller
+        v_current = self.push_controller.get_ee_velocity()
+
         # Enhanced debug print
         if self.episode_length % 5 == 0:
             self.debug_printer.print_step(
                 self.episode_length, hand_pos, bottle_pos, action, reward, info,
                 self.push_controller.last_push_dir,
-                self.push_controller.p_des,
+                None,  # p_des removed (pure velocity control)
                 self.push_controller.last_F_cmd,
-                #self.push_controller.last_F_des,
-                # self.push_controller.last_f_magnitude
             )
 
             # Log to CSV
             self.step_logger.log(
                 self.total_steps, self.episode_length, self.episode_num,
-                hand_pos, bottle_pos, self.push_controller.p_des,
+                hand_pos, bottle_pos, None,  # p_des removed
                 action, self.config,
                 self.push_controller.last_push_dir, 
                 #self.push_controller.last_F_des,
                 self.push_controller.last_F_cmd, 
                 force,
-                reward, info
+                reward, info,
+                v_current
             )
 
         self.logger.log_step(

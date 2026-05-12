@@ -116,11 +116,12 @@ from env import PandaPushTrajectoryEnv
 # MODEL_NAME = "trained_model_curved_r_angle_1.zip"
 
 # MODEL_NAME = "trained_model_s_curve_r_angle_3.zip"
-MODEL_NAME = "trained_model_straight_only_push_v18.zip"
+# MODEL_NAME = "trained_model_straight_only_push_v18.zip"
+MODEL_NAME = "trained_model_s_curve_only_push_v24.zip"
 
-TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
+# TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization
-# TRAJECTORY_TYPE = "s_curve"  # Should match training or test generalization
+TRAJECTORY_TYPE = "s_curve"  # Should match training or test generalization
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.02  # Seconds between frames (0 for max speed)
 

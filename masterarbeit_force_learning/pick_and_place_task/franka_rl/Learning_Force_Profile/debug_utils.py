@@ -105,6 +105,8 @@ class StepLogger:
             "a_vx", "a_vy", "a_wz",
             # Scaled actions
             "vx_mps", "vy_mps", "wz_rps",
+            # ACTUAL VELOCITY
+            "v_curr_x", "v_curr_y", "v_curr_z",
             # Forces
             "push_dir_x", "push_dir_y",
             "F_cmd_mag", "F_measured_mag",
@@ -124,7 +126,7 @@ class StepLogger:
             hand_pos, bottle_pos, p_des,
             action, config,
             push_dir, F_cmd, F_measured,
-            reward, info):
+            reward, info, v_current):
         """Log one step of data."""
 
         # Scaled actions
@@ -150,6 +152,8 @@ class StepLogger:
             f"{action[0]:.4f}", f"{action[1]:.4f}", f"{action[2]:.4f}",
             # Scaled actions
             f"{vx_scaled:.5f}", f"{vy_scaled:.5f}", f"{wz_scaled:.4f}",
+            # ACTUAL VELOCITY
+            f"{v_current[0]:.5f}", f"{v_current[1]:.5f}", f"{v_current[2]:.5f}",
             # Forces
             f"{push_dir[0]:.4f}", f"{push_dir[1]:.4f}",
             f"{F_cmd_mag:.4f}", f"{F_meas_mag:.4f}",
