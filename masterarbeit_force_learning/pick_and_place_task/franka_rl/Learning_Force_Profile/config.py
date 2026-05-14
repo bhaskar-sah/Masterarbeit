@@ -72,7 +72,7 @@ class EnvConfig:
     w_alignment: float = 0.5            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
 
-    time_penalty: float = 0.05 # was 3.0 # was 0.5 # was 0.005
+    time_penalty: float = 3.0 # was 3.0 # was 0.5 # was 0.005
 
     success_bonus: float = 100.0
     failure_penalty: float = -100.0 # was -10.0 # was -100.0
