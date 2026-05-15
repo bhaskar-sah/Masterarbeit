@@ -347,15 +347,51 @@ class PandaPushTrajectoryEnv(gym.Env):
     #     print(f"  Status:     Prog={progress*100:5.1f}%, Dev={deviation*100:4.1f}cm, Tilt={tilt:.4f}, Force={force_mag:4.1f}N")
     #     print("-" * 65)
 
+    # def render(self):
+    #     """Render the environment."""
+    #     if self.render_mode == "human":
+    #         self.renderer.render(self.traj_manager.trajectory)
+
     def render(self):
         """Render the environment."""
         if self.render_mode == "human":
             self.renderer.render(self.traj_manager.trajectory)
+            
+        elif self.render_mode == "rgb_array":
+            import mujoco
+            
+            # 1. Lazily initialize a native MuJoCo renderer if it doesn't exist yet
+            if not hasattr(self, '_mujoco_offscreen_renderer'):
+                # Creates an offscreen buffer (defaulting to a standard 640x480 frame size)
+                self._mujoco_offscreen_renderer = mujoco.Renderer(self.model, height=480, width=640)
+            
+            # 2. Sync the native renderer with your current simulation data state
+            self._mujoco_offscreen_renderer.update_scene(self.data)
+            
+            # 3. Compile and return the raw (480, 640, 3) matrix back to imageio
+            return self._mujoco_offscreen_renderer.render()
+
+
+
+    # def close(self):
+    #     """Clean up resources."""
+    #     self.renderer.close()
+    #     self.step_logger.close()
 
     def close(self):
-        """Clean up resources."""
-        self.renderer.close()
-        self.step_logger.close()
+        """Clean up rendering contexts."""
+        # Clean up your custom trajectory renderer if it has a close method
+        if hasattr(self, 'renderer') and hasattr(self.renderer, 'close'):
+            self.renderer.close()
+            
+        # Clear out the offscreen MuJoCo renderer explicitly before teardown
+        if hasattr(self, '_mujoco_offscreen_renderer'):
+            try:
+                self._mujoco_offscreen_renderer.close()
+            except Exception:
+                pass
+            del self._mujoco_offscreen_renderer
+
 
     def get_episode_summary(self) -> dict:
         """Get summary of the episode for logging."""
