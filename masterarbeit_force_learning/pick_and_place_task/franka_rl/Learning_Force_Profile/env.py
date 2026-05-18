@@ -101,6 +101,14 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
 
+        # ============ TIMING SANITY CHECK ============
+        print(f"[ENV TIMING] MuJoCo's actual physics timestep: {self.model.opt.timestep} s")
+        print(f"[ENV TIMING] config.py's dt variable:          {self.config.dt} s")
+        print(f"[ENV TIMING] These should be equal:            {self.model.opt.timestep == self.config.dt}")
+        print(f"[ENV TIMING] Real control_dt:                  {self.model.opt.timestep * self.config.n_substeps} s "
+            f"({1.0 / (self.model.opt.timestep * self.config.n_substeps):.1f} Hz)")
+        # ===============================================
+
     def _get_body_ids(self):
         """Get MuJoCo body IDs."""
         self.push_start_key_id = self.model.key("push_start").id

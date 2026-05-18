@@ -46,10 +46,10 @@ class EnvConfig:
     # ============================================================
     # TIMING
     # ============================================================
-    dt: float = 0.002
+    dt: float = 0.0005      # --> this was the crucial mistake
     n_substeps: int = 20
     max_episode_length: int = 2500
-    control_dt: float = 0.04
+    control_dt: float = dt * n_substeps      # --> 0.0005 * 20 = 0.01 
 
     # ============================================================
     # TILT SAFETY
