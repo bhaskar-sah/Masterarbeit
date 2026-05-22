@@ -32,7 +32,7 @@ class EnvConfig:
     # ============================================================
     v_max: float = 0.10 # was 0.05
     w_max: float = 1.0 # was 0.3
-    # f_max: float = 20.0
+    f_max: float = 8.0 # was 20.0
     # F_FLOOR: float = 0.5 # was 2.0
 
     # ============================================================
@@ -61,7 +61,7 @@ class EnvConfig:
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
     # ============================================================
     w_progress: float = 500.0
-    w_deviation: float = 30.0           # was 100; now used quadratically
+    w_deviation: float = 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
     max_deviation_reward: float = 5.0   # legacy, unused
     w_stability: float = 3.0
     w_contact: float = 0.0
@@ -72,7 +72,7 @@ class EnvConfig:
     w_alignment: float = 0.5            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
 
-    time_penalty: float = 3.0 # was 3.0 # was 0.5 # was 0.005
+    time_penalty: float = 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
 
     success_bonus: float = 100.0
     failure_penalty: float = -100.0 # was -10.0 # was -100.0
@@ -89,6 +89,11 @@ class EnvConfig:
     # ACTION SPACE: [vx, vy, wz]
     # ============================================================
     action_dim: int = 3
+
+    # ============================================================
+    # ACTION MODE
+    # ============================================================
+    action_mode: str = "force"   # "velocity" or "force"
 
 
 def get_default_config() -> EnvConfig:

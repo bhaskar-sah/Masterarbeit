@@ -82,7 +82,7 @@ class RewardComputer:
         # 1. PROGRESS — gated by alignment
         # ============================================================
         progress_delta = progress - self.prev_progress
-        r_progress = self.config.w_progress * max(progress_delta, 0) * alignment
+        r_progress = self.config.w_progress * max(progress_delta, 0) # * alignment
 
         # ============================================================
         # 2. DEVIATION — QUADRATIC
