@@ -182,13 +182,31 @@ class RewardComputer:
 
         # Quadratic penalty so small deviations are fine, but large ones hurt
         r_orientation = -1.0 * ((1.0 - cos_flange_align) ** 2) # was -1.0
+
+        # ============================================================
+        # 9. VELOCITY PENALTY
+        # Penalize the agent if the end-effector moves faster than the limit
+        # As Marko mentioned in the chat <-ask him how to do it tomorrow.
+        # Is the way you implemented is actually correct.
+        # ============================================================
+        # Fetch current end-effector velocity from the controller
+        v_current_3d = self.push_controller.get_ee_velocity()
+        v_mag = np.linalg.norm(v_current_3d[:2])  # Only care about XY speed
+        
+        if v_mag > self.config.v_target_limit:
+            # Quadratic penalty: a little bit over is a small fine, 
+            # a massive slapshot is a huge fine.
+            speed_excess = v_mag - self.config.v_target_limit
+            r_velocity = -self.config.w_velocity_penalty * (speed_excess ** 2)
+        else:
+            r_velocity = 0.0
         
 
         # ============================================================
         # TOTAL + TIME PENALTY FIX
         # ============================================================
         total_reward = (r_progress + r_deviation + r_stability +
-                        r_contact + r_alignment + r_position + r_orientation)
+                        r_contact  + r_velocity) # + r_alignment + r_position + r_orientation
         
         # ACTUALLY APPLY THE TIME PENALTY
         total_reward -= self.config.time_penalty
@@ -197,11 +215,12 @@ class RewardComputer:
         info['r_deviation'] = r_deviation
         info['r_stability'] = r_stability
         info['r_contact'] = r_contact
-        info['r_alignment'] = r_alignment
-        info['r_position'] = r_position
-        info['alignment'] = alignment
-        info['side_dot'] = side_dot
-        info['f_along_tangent'] = f_along_tangent
+        # info['r_alignment'] = r_alignment
+        # info['r_position'] = r_position
+        # info['alignment'] = alignment
+        # info['side_dot'] = side_dot
+        # info['f_along_tangent'] = f_along_tangent
+        info['r_velocity'] = r_velocity
 
         # ============================================================
         # TERMINAL CONDITIONS

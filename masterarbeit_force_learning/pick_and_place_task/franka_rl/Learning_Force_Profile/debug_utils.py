@@ -73,7 +73,8 @@ class DebugPrinter:
               f"r_stab: {info.get('r_stability', 0):+6.3f}  "
               f"r_contact: {info.get('r_contact', 0):+6.3f}  "
               f"r_align: {info.get('r_alignment', 0):+6.3f}  "
-              f"r_pos: {info.get('r_position', 0):+6.3f}")
+              f"r_pos: {info.get('r_position', 0):+6.3f}  "
+              f"r_vel: {info.get('r_velocity',0):+6.6f}")
         print(f"{'─' * 70}")
 
 
@@ -117,7 +118,7 @@ class StepLogger:
             # Rewards
             "reward_total",
             "r_progress", "r_deviation", "r_stability",
-            "r_contact", "r_alignment", "r_position",
+            "r_contact", "r_alignment", "r_position", "r_velocity",
             # Position error
             "p_error_mag",
         ])
@@ -171,6 +172,7 @@ class StepLogger:
             f"{info.get('r_contact', 0):.5f}",
             f"{info.get('r_alignment', 0):.5f}",
             f"{info.get('r_position', 0):.5f}",
+            f"{info.get('r_velocity', 0):.5f}",
             # Position error
             f"{p_error:.5f}",
         ])

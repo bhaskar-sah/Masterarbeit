@@ -245,10 +245,10 @@ from env import PandaPushTrajectoryEnv
 # TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization
 TRAJECTORY_TYPE = "s_curve"  
-MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v28_force" # <--- Change to v26, v27, etc. in the future
+MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v30_force" # <--- Change to v26, v27, etc. in the future
 
 NUM_EPISODES = 10
-VISUAL_DELAY = 0.02 # was 0.02  # Seconds between frames (0 for max speed)
+VISUAL_DELAY = 0.00 # was 0.02  # Seconds between frames (0 for max speed)
 
 # ==================== SETUP ====================
 print("="*60)

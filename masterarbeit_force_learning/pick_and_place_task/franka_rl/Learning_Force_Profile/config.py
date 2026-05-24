@@ -32,7 +32,7 @@ class EnvConfig:
     # ============================================================
     v_max: float = 0.10 # was 0.05
     w_max: float = 1.0 # was 0.3
-    f_max: float = 8.0 # was 20.0
+    f_max: float = 20.0 # was 20.0
     # F_FLOOR: float = 0.5 # was 2.0
 
     # ============================================================
@@ -71,6 +71,8 @@ class EnvConfig:
     target_force: float = 5.0
     w_alignment: float = 0.5            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
+    w_velocity_penalty: float = 50.0 # Weight for the speed
+    v_target_limit: float = 0.08 # 8 cm/s speed limit
 
     time_penalty: float = 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
 
