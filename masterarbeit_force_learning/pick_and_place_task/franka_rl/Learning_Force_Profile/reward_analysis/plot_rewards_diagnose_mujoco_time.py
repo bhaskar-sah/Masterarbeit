@@ -402,6 +402,27 @@ def plot_rewards(logs, trajectory, info, save_path=None):
     # Actual bottle path
     ax7.plot(logs["bottle_x"], logs["bottle_y"], 'b-', linewidth=2,
              label="Actual Bottle Path", zorder=3)
+    
+    # ---> ADD THIS NEW BLOCK FOR FORCE ARROWS <---
+    # Subsample the data so we don't plot 500 overlapping arrows (e.g., plot every 10th step)
+    step_size = max(1, len(logs["bottle_x"]) // 30) 
+    
+    # We use -logs["F_meas_x"] because we want to see the force the ROBOT exerts ON the BOTTLE
+    ax7.quiver(
+        logs["bottle_x"][::step_size], 
+        logs["bottle_y"][::step_size], 
+        -logs["F_meas_x"][::step_size], 
+        -logs["F_meas_y"][::step_size],
+        color='purple', 
+        angles='xy', 
+        scale_units='xy', 
+        scale=150,           # Adjust this scale if the arrows are too long/short
+        width=0.005,
+        alpha=0.6,
+        label="Measured Force Vectors",
+        zorder=4
+    )
+    # ---------------------------------------------
 
     # Hand path
     ax7.plot(logs["hand_x"], logs["hand_y"], 'g-', linewidth=1, alpha=0.5,
@@ -456,16 +477,16 @@ def plot_rewards(logs, trajectory, info, save_path=None):
         fig.tight_layout()
 
     # Save or show
-    # if save_path:
-    #     base, ext = os.path.splitext(save_path)
-    #     for name, fig in figures:
-    #         fig_path = f"{base}_{name}{ext}"
-    #         fig.savefig(fig_path, dpi=150, bbox_inches='tight')
-    #         print(f"Saved: {fig_path}")
-    # else:
-    #     plt.show()
+    if save_path:
+        base, ext = os.path.splitext(save_path)
+        for name, fig in figures:
+            fig_path = f"{base}_{name}{ext}"
+            fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+            print(f"Saved: {fig_path}")
+    else:
+        plt.show()
 
-    plt.show()
+    # plt.show()
 
     return figures
 
