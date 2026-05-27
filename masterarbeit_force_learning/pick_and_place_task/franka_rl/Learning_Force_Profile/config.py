@@ -16,16 +16,16 @@ class EnvConfig:
     # ============================================================
     # CONTROLLER GAINS
     # ============================================================
-    Kp: float = 150.0 # was 100.0
-    Kd: float = 100.0 # was 20.0 # maybe try with 100
-    Kf: float = 0.0 # was 0.5 # Force feedback gain: kept for backward compat, unused in pure motion control
+    # Kp: float = 150.0 # was 100.0
+    # Kd: float = 100.0 # was 20.0 # maybe try with 100
+    # Kf: float = 0.0 # was 0.5 # Force feedback gain: kept for backward compat, unused in pure motion control
 
     Kp_rot: float = 10.0
     Kd_rot: float = 15.0 # was 2.0
 
     # Cap on p_error magnitude (m). Prevents position term from dominating
     # F_cmd when p_des races ahead of actual EE.
-    p_error_max = 0.03 # was 0.03 # 0.03  # 3 cm
+    # p_error_max = 0.03 # was 0.03 # 0.03  # 3 cm
 
     # ============================================================
     # ACTION LIMITS
@@ -60,7 +60,7 @@ class EnvConfig:
     # ============================================================
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
     # ============================================================
-    w_progress: float = 500.0
+    w_progress: float = 800.0 # was 500.0
     w_deviation: float = 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
     max_deviation_reward: float = 5.0   # legacy, unused
     w_stability: float = 3.0
@@ -71,14 +71,14 @@ class EnvConfig:
     target_force: float = 5.0
     w_alignment: float = 0.5            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
-    w_velocity_penalty: float = 50.0 # Weight for the speed
-    v_target_limit: float = 0.08 # 8 cm/s speed limit
+    w_velocity_penalty: float = 10.0 # was 50.0 # Weight for the speed
+    v_target_limit: float = 0.15 # was 0.08 # 8 cm/s speed limit
 
-    time_penalty: float = 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
+    time_penalty: float = 0.1 # was 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
 
     success_bonus: float = 100.0
     failure_penalty: float = -100.0 # was -10.0 # was -100.0
-    off_path_penalty: float = -50.0 # was -10.0     # was -50
+    off_path_penalty: float = -10.0 # was -50.0 # was -10.0     # was -50
 
     # ============================================================
     # OBSERVATION SPACE
@@ -95,7 +95,7 @@ class EnvConfig:
     # ============================================================
     # ACTION MODE
     # ============================================================
-    action_mode: str = "force"   # "velocity" or "force"
+    # action_mode: str = "force"   # "velocity" or "force"
 
 
 def get_default_config() -> EnvConfig:

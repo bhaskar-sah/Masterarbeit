@@ -91,8 +91,9 @@ class ObservationBuilder:
         # ---- contact force, sign-corrected ----
         # MuJoCo gives bottle-on-robot reaction; flip to robot-on-bottle
         # so positive components mean "robot is pushing bottle in that direction"
-        raw_force = self.contact_manager.get_contact_force()
-        f_robot_on_bottle = -raw_force
+        # raw_force = self.contact_manager.get_contact_force()
+        # f_robot_on_bottle = -raw_force
+        f_robot_on_bottle = self.contact_manager.get_contact_force()
         is_touching_bool = self.contact_manager.is_touching()
         is_touching = np.array(
             [1.0 if is_touching_bool else 0.0],
