@@ -190,7 +190,7 @@ ALGORITHM = "PPO"
 # TRAJECTORY_TYPE = "curved"
 TRAJECTORY_TYPE = "s_curve"
 TOTAL_TIMESTEPS = 2_000_000
-MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v30_force"
+MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v36_force"
 
 # ==================== FOLDER SETUP ====================
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -211,7 +211,7 @@ print("="*60)
 
 # Create training environment
 env = PandaPushTrajectoryEnv(
-    render_mode=None,
+    render_mode= "human", # was None,
     trajectory_type=TRAJECTORY_TYPE
 )
 print("Environment Created!!!!!")

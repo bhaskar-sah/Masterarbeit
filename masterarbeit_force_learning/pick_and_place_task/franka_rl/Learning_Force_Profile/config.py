@@ -61,7 +61,7 @@ class EnvConfig:
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
     # ============================================================
     w_progress: float = 800.0 # was 500.0
-    w_deviation: float = 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
+    w_deviation: float = 100.0 # 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
     max_deviation_reward: float = 5.0   # legacy, unused
     w_stability: float = 3.0
     w_contact: float = 0.0
@@ -71,8 +71,14 @@ class EnvConfig:
     target_force: float = 5.0
     w_alignment: float = 0.5            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
-    w_velocity_penalty: float = 10.0 # was 50.0 # Weight for the speed
-    v_target_limit: float = 0.15 # was 0.08 # 8 cm/s speed limit
+    w_velocity_penalty: float = 100.0 # was 10.0 # was 50.0 # Weight for the speed
+    v_target_limit: float = 0.08 # 8 cm/s speed limit
+
+    # NEW: Action Smoothing Penalties
+    w_action_rate: float = 2.0    # Punishes jittery, oscillating commands (Bang-Bang fix)
+    w_action_mag: float = 0.5     # Punishes using maximum force lazily
+    w_action_perp: float = 1.0           # NEW — penalize lateral wasted force
+    action_mag_buffer: float = 3.0       # NEW — N allowed over measured along-force
 
     time_penalty: float = 0.1 # was 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
 
@@ -84,11 +90,11 @@ class EnvConfig:
     # OBSERVATION SPACE
     # ============================================================
     # Layout: see observation.py for full index reference
-    # 7 + 7 + 3 + 3 + 3 + 2 + 1 + 2 + 1 + 2 + 1 + 1 + 3 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 = 48
-    obs_dim: int = 48
+    # 7 + 7 + 3 + 3 + 3 + 2 + 2 + 1 + 2 + 1 + 2 + 1 + 1 + 3 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 = 50
+    obs_dim: int = 50
 
     # ============================================================
-    # ACTION SPACE: [vx, vy, wz]
+    # ACTION SPACE: [Fx_ee, Fy_ee, wz]
     # ============================================================
     action_dim: int = 3
 

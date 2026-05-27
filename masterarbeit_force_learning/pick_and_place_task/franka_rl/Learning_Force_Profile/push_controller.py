@@ -127,6 +127,17 @@ class PushController:
         R_curr = self.get_ee_orientation()
         F_cmd_base = R_curr @ F_cmd_ee
 
+        # Hold the exact Z-height (0.84m) using impedance control
+        current_z = self.get_ee_position()[2]
+        current_vz = self.get_ee_velocity()[2]
+
+        target_z = 0.84
+        kp_z = 1000.0
+        kd_z = 50.0
+
+        # Override the floating Z-command with the holding force
+        F_cmd_base[2] = kp_z * (target_z - current_z) - kd_z * current_vz
+
         # ====================================================================
         # 4. ORIENTATION DAMPING (Keep wrist stable)
         # ====================================================================

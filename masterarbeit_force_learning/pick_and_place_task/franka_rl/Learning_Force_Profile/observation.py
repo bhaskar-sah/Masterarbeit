@@ -78,6 +78,11 @@ class ObservationBuilder:
         bottle_pos = self.data.xpos[self.bottle_body_id].astype(np.float32)
         bottle_xy = bottle_pos[:2]
 
+        # ---- bottle linear velocity in world frame, XY only ----
+        # Assumes bottle owns the first free joint, so qvel[0:3] is its
+        # linear velocity in world frame. Consistent with qvel_start=6.
+        bottle_vel_xy = self.data.qvel[0:2].astype(np.float32)
+
         # Hand-to-bottle
         hand_to_bottle = bottle_pos[:2] - hand_pos[:2]
         dist_to_bottle = np.linalg.norm(hand_to_bottle)
@@ -137,11 +142,11 @@ class ObservationBuilder:
             cos_force_alignment = 0.0
         cos_force_alignment_arr = np.array([cos_force_alignment], dtype=np.float32)
 
-        # ---- NEW: future push direction (anticipatory) ----
+        # ---- future push direction ----
         future_push_dir = self._get_future_push_dir(bottle_xy).astype(np.float32)
 
         # =====================================================================
-        # FRAME TRANSFORMATION FOR RL AGENT (EGO-CENTRIC)
+        # FRAME TRANSFORMATION FOR RL AGENT
         # =====================================================================
         # The agent acts in the local End-Effector frame. We must rotate the 
         # world-frame trajectory vectors into the EE frame so the agent knows
@@ -149,11 +154,11 @@ class ObservationBuilder:
         
         R_world_to_ee = ee_mat.T 
 
-        # 1. Transform Push Direction to EE Frame
+        # Transform Push Direction to EE Frame
         push_dir_3d = np.array([push_dir[0], push_dir[1], 0.0])
         push_dir_ee = (R_world_to_ee @ push_dir_3d)[:2].astype(np.float32)
 
-        # 2. Transform Deviation Vector to EE Frame
+        # Transform Deviation Vector to EE Frame
         dev_vec_3d = np.array([deviation_vec[0], deviation_vec[1], 0.0])
         deviation_vec_ee = (R_world_to_ee @ dev_vec_3d)[:2].astype(np.float32)
 
@@ -168,6 +173,7 @@ class ObservationBuilder:
             hand_pos,                                        # 3
             hand_vel,                                        # 3
             bottle_pos,                                      # 3
+            bottle_vel_xy,                                   # 2
             dir_to_bottle.astype(np.float32),                # 2
             np.array([dist_to_bottle], dtype=np.float32),    # 1
             push_dir_ee,                                     # 2
@@ -175,16 +181,16 @@ class ObservationBuilder:
             deviation_vec_ee,                                # 2
             np.array([deviation_mag], dtype=np.float32),     # 1
             np.array([progress], dtype=np.float32),          # 1
-            f_robot_on_bottle.astype(np.float32),            # 3  (sign-corrected)
+            f_robot_on_bottle.astype(np.float32),            # 3  
             is_touching,                                     # 1
             bottle_tilt,                                     # 1
             ee_x_axis,                                       # 3
             flange_axis_xy,                                  # 2
             cos_alignment_arr,                               # 1
             side_dot_arr,                                    # 1
-            cos_force_alignment_arr,                         # 1  (NEW)
-            future_push_dir_ee,                              # 2  (NEW)
-        ])  # Total: 48
+            cos_force_alignment_arr,                         # 1  
+            future_push_dir_ee,                              # 2  
+        ])  # Total: 50
 
         return obs.astype(np.float32)
 
@@ -198,21 +204,22 @@ Index   | Dim | Name                  | Description
 14-16   | 3   | hand_pos              | EE position [x,y,z]
 17-19   | 3   | hand_vel              | EE velocity [vx,vy,vz]
 20-22   | 3   | bottle_pos            | Bottle position [x,y,z]
-23-24   | 2   | dir_to_bottle         | Unit vector to bottle [x,y]
-25      | 1   | dist_to_bottle        | Distance to bottle
-26-27   | 2   | push_dir              | Desired push direction [x,y]
-28      | 1   | dist_to_target        | Distance to lookahead target
-29-30   | 2   | deviation_vec         | Bottle->trajectory vector [x,y]
-31      | 1   | deviation_mag         | |deviation|
-32      | 1   | progress              | Progress in [0,1]
-33-35   | 3   | f_robot_on_bottle     | Force ROBOT applies to bottle (sign-flipped)
-36      | 1   | is_touching           | Binary contact flag
-37      | 1   | bottle_tilt           | Bottle z-component (1=upright)
-38-40   | 3   | ee_x_axis             | EE local x-axis in world
-41-42   | 2   | flange_axis_xy        | Flange push axis in world XY
-43      | 1   | cos_alignment         | cos(flange_axis, push_dir)
-44      | 1   | side_dot              | dot(bottle->flange, push_dir); -1=behind
-45      | 1   | cos_force_alignment   | cos(force, push_dir)        [NEW]
-46-47   | 2   | future_push_dir_ee       | Push dir 8 points further   [NEW]
-TOTAL: 48
+23-24   | 2   | bottle_vel_xy         | Bottle linear vel [vx,vy]    -> added new
+25-26   | 2   | dir_to_bottle         | Unit vector to bottle [x,y]
+27      | 1   | dist_to_bottle        | Distance to bottle
+28-29   | 2   | push_dir_ee           | Desired push direction (EE frame)
+30      | 1   | dist_to_target        | Distance to lookahead target
+31-32   | 2   | deviation_vec_ee      | Bottle->trajectory (EE frame)
+33      | 1   | deviation_mag         | |deviation|
+34      | 1   | progress              | Progress in [0,1]
+35-37   | 3   | f_robot_on_bottle     | Contact force vector
+38      | 1   | is_touching           | Binary contact flag
+39      | 1   | bottle_tilt           | Bottle z-component (1=upright)
+40-42   | 3   | ee_x_axis             | EE local x-axis in world
+43-44   | 2   | flange_axis_xy        | Flange push axis in world XY
+45      | 1   | cos_alignment         | cos(flange_axis, push_dir)
+46      | 1   | side_dot              | dot(bottle->flange, push_dir)
+47      | 1   | cos_force_alignment   | cos(force, push_dir)
+48-49   | 2   | future_push_dir_ee    | Push dir 8 points further (EE frame)
+TOTAL: 50
 """
