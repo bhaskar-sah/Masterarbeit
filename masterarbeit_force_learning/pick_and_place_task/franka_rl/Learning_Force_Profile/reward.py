@@ -288,14 +288,14 @@ class RewardComputer:
         self.prev_progress = 0.0
 
         # Track previous action for smoothing
-        self.prev_action = np.zeros(self.config.action_dim)
+        # self.prev_action = np.zeros(self.config.action_dim)
 
     def reset(self):
         self.prev_progress = 0.0
         # NEW added: Reset action tracker
-        self.prev_action = np.zeros(self.config.action_dim)
+        # self.prev_action = np.zeros(self.config.action_dim)
 
-    def compute_reward(self, action):
+    def compute_reward(self):
         info = {"is_success": False}
 
         bottle_pos = self.data.xpos[self.bottle_body_id]
@@ -322,26 +322,26 @@ class RewardComputer:
         push_dir_2d, _, _ = self.traj_manager.get_push_direction(bottle_xy)
         push_dir_3d = np.array([push_dir_2d[0], push_dir_2d[1], 0.0])
 
-        # ============================================================
-        # COMMANDED FORCE IN WORLD FRAME (for along/perp decomposition)
-        # action[0], action[1] are EE-frame forces (normalized -1..1)
-        # ============================================================
-        ee_mat = self.data.xmat[self.hand_body_id].reshape(3, 3)
-        F_cmd_ee_2d = np.array([
-            action[0] * self.config.f_max,
-            action[1] * self.config.f_max,
-        ])
-        # Rotate XY of EE frame into world frame
-        F_cmd_world_2d = ee_mat[:2, :2] @ F_cmd_ee_2d
+        # # ============================================================
+        # # COMMANDED FORCE IN WORLD FRAME (for along/perp decomposition)
+        # # action[0], action[1] are EE-frame forces (normalized -1..1)
+        # # ============================================================
+        # ee_mat = self.data.xmat[self.hand_body_id].reshape(3, 3)
+        # F_cmd_ee_2d = np.array([
+        #     action[0] * self.config.f_max,
+        #     action[1] * self.config.f_max,
+        # ])
+        # # Rotate XY of EE frame into world frame
+        # F_cmd_world_2d = ee_mat[:2, :2] @ F_cmd_ee_2d
  
-        # Decompose along push_dir
-        push_dir_unit = push_dir_2d / (np.linalg.norm(push_dir_2d) + 1e-9)
-        push_perp = np.array([-push_dir_unit[1], push_dir_unit[0]])
+        # # Decompose along push_dir
+        # push_dir_unit = push_dir_2d / (np.linalg.norm(push_dir_2d) + 1e-9)
+        # push_perp = np.array([-push_dir_unit[1], push_dir_unit[0]])
  
-        f_cmd_along = float(np.dot(F_cmd_world_2d, push_dir_unit))
-        f_cmd_perp = float(np.dot(F_cmd_world_2d, push_perp))
+        # f_cmd_along = float(np.dot(F_cmd_world_2d, push_dir_unit))
+        # f_cmd_perp = float(np.dot(F_cmd_world_2d, push_perp))
  
-        f_meas_along = float(np.dot(f_robot_on_bottle[:2], push_dir_unit))
+        # f_meas_along = float(np.dot(f_robot_on_bottle[:2], push_dir_unit))
  
 
         # ============================================================
@@ -412,42 +412,42 @@ class RewardComputer:
         else:
             r_velocity = 0.0
 
-        # ============================================================
-        # 7. ACTION tate penalty (limiting from just taking the whole range from -1 to 1) SMOOTHNESS PENALTIES 
-        # ============================================================
-        action_diff = np.linalg.norm(action - self.prev_action)
-        r_action_rate = -self.config.w_action_rate * (action_diff ** 2)
+        # # ============================================================
+        # # 7. ACTION tate penalty (limiting from just taking the whole range from -1 to 1) SMOOTHNESS PENALTIES 
+        # # ============================================================
+        # action_diff = np.linalg.norm(action - self.prev_action)
+        # r_action_rate = -self.config.w_action_rate * (action_diff ** 2)
 
-        # ============================================================
-        # 8. ACTION MAGNITUDE — ALONG-DIRECTION THRESHOLDING
-        # Penalize commanded along-force in excess of what's physically
-        # needed: (measured along-force + buffer for static friction
-        # breakaway and acceleration).
-        # ============================================================
-        # Measured along-force can be negative early in contact; clamp at 0
-        # so threshold never goes negative.
-        f_meas_along_pos = max(f_meas_along, 0.0)
-        buffer = self.config.action_mag_buffer  # e.g. 3.0 N
-        excess_along = max(abs(f_cmd_along) - f_meas_along_pos - buffer, 0.0)
-        r_action_mag = -self.config.w_action_mag * (excess_along ** 2)
+        # # ============================================================
+        # # 8. ACTION MAGNITUDE — ALONG-DIRECTION THRESHOLDING
+        # # Penalize commanded along-force in excess of what's physically
+        # # needed: (measured along-force + buffer for static friction
+        # # breakaway and acceleration).
+        # # ============================================================
+        # # Measured along-force can be negative early in contact; clamp at 0
+        # # so threshold never goes negative.
+        # f_meas_along_pos = max(f_meas_along, 0.0)
+        # buffer = self.config.action_mag_buffer  # e.g. 3.0 N
+        # excess_along = max(abs(f_cmd_along) - f_meas_along_pos - buffer, 0.0)
+        # r_action_mag = -self.config.w_action_mag * (excess_along ** 2)
  
-        # ============================================================
-        # 9. PERPENDICULAR FORCE PENALTY (wasted lateral force)
-        # The bottle can't slide sideways efficiently — any force the
-        # agent commands perpendicular to push_dir is wasted effort and
-        # creates the Y-axis chatter visible in the F_cmd plots.
-        # ============================================================
-        r_action_perp = -self.config.w_action_perp * (f_cmd_perp ** 2)
+        # # ============================================================
+        # # 9. PERPENDICULAR FORCE PENALTY (wasted lateral force)
+        # # The bottle can't slide sideways efficiently — any force the
+        # # agent commands perpendicular to push_dir is wasted effort and
+        # # creates the Y-axis chatter visible in the F_cmd plots.
+        # # ============================================================
+        # r_action_perp = -self.config.w_action_perp * (f_cmd_perp ** 2)
 
-        # Update previous action for the next step
-        self.prev_action = action.copy()
+        # # Update previous action for the next step
+        # self.prev_action = action.copy()
         
         # ============================================================
         # TOTAL + TIME PENALTY FIX
         # ============================================================
         total_reward = (r_progress + r_deviation + r_stability +
-                        r_contact  + r_alignment + r_velocity + 
-                        r_action_rate + r_action_mag + r_action_perp)
+                        r_contact  + r_alignment + r_velocity)# + 
+                        # r_action_rate + r_action_mag + r_action_perp)
         
         # ACTUALLY APPLY THE TIME PENALTY
         total_reward -= self.config.time_penalty
@@ -459,12 +459,12 @@ class RewardComputer:
         info['r_alignment'] = r_alignment
         info['f_along_tangent'] = f_along_tangent
         info['r_velocity'] = r_velocity
-        info['r_action_rate'] = r_action_rate
-        info['r_action_mag'] = r_action_mag
-        info['r_action_prep'] = r_action_perp
-        info['f_cmd_along'] = f_cmd_along
-        info['f_cmd_perp'] = f_cmd_perp
-        info['f_meas_along'] = f_meas_along
+        # info['r_action_rate'] = r_action_rate
+        # info['r_action_mag'] = r_action_mag
+        # info['r_action_prep'] = r_action_perp
+        # info['f_cmd_along'] = f_cmd_along
+        # info['f_cmd_perp'] = f_cmd_perp
+        # info['f_meas_along'] = f_meas_along
 
         # ============================================================
         # TERMINAL CONDITIONS

@@ -274,7 +274,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         obs = self.obs_builder.get_observation()
         
         # Pass pure push logic to reward computer
-        reward, info = self.reward_computer.compute_reward(action)
+        reward, info = self.reward_computer.compute_reward()
 
         # Get positions and force for logging
         hand_pos = self.data.xpos[self.hand_body_id].copy()

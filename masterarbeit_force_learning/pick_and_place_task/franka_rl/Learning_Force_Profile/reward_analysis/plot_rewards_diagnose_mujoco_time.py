@@ -131,9 +131,9 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
         logs["F_meas_mag"].append(F_meas_mag)
 
         # ---> logging commanded and measured forces for each axes <---
-        logs["F_cmd_x"].append(-F_cmd[0])
-        logs["F_cmd_y"].append(-F_cmd[1])
-        logs["F_cmd_z"].append(-F_cmd[2])
+        logs["F_cmd_x"].append(F_cmd[0])
+        logs["F_cmd_y"].append(F_cmd[1])
+        logs["F_cmd_z"].append(F_cmd[2])
         logs["F_meas_x"].append(F_meas[0])
         logs["F_meas_y"].append(F_meas[1])
         logs["F_meas_z"].append(F_meas[2])
@@ -411,15 +411,15 @@ def plot_rewards(logs, trajectory, info, save_path=None):
     ax7.quiver(
         logs["bottle_x"][::step_size], 
         logs["bottle_y"][::step_size], 
-        -logs["F_meas_x"][::step_size], 
-        -logs["F_meas_y"][::step_size],
+        logs["F_meas_x"][::step_size], 
+        logs["F_meas_y"][::step_size],
         color='purple', 
         angles='xy', 
         scale_units='xy', 
         scale=150,           # Adjust this scale if the arrows are too long/short
         width=0.005,
         alpha=0.6,
-        label="Measured Force Vectors",
+        label="Measured Force Vectors (robot -> bottle)",
         zorder=4
     )
     # ---------------------------------------------
@@ -477,16 +477,16 @@ def plot_rewards(logs, trajectory, info, save_path=None):
         fig.tight_layout()
 
     # Save or show
-    if save_path:
-        base, ext = os.path.splitext(save_path)
-        for name, fig in figures:
-            fig_path = f"{base}_{name}{ext}"
-            fig.savefig(fig_path, dpi=150, bbox_inches='tight')
-            print(f"Saved: {fig_path}")
-    else:
-        plt.show()
+    # if save_path:
+    #     base, ext = os.path.splitext(save_path)
+    #     for name, fig in figures:
+    #         fig_path = f"{base}_{name}{ext}"
+    #         fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+    #         print(f"Saved: {fig_path}")
+    # else:
+    #     plt.show()
 
-    # plt.show()
+    plt.show()
 
     return figures
 
