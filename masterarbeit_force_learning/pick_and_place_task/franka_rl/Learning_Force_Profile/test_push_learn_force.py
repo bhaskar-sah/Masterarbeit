@@ -245,7 +245,11 @@ from env import PandaPushTrajectoryEnv
 # TRAJECTORY_TYPE = "straight"  # Should match training or test generalization
 # TRAJECTORY_TYPE = "curved"  # Should match training or test generalization
 TRAJECTORY_TYPE = "s_curve"  
-MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v37_force" # <--- Change to v26, v27, etc. in the future
+# MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v37_force" # this is working <--- Change to v26, v27, etc. in the future
+# MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v46_force_normal" # <--- Change to v26, v27, etc. in the future
+# MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v48_force_normal"
+# MODEL_DIR = f"trained_model_curriculum_only_push_v48_force_normal"
+MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v50_force_normal"
 
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.00 # was 0.02  # Seconds between frames (0 for max speed)
@@ -258,7 +262,7 @@ print("="*60)
 # Create environment with rendering
 env = PandaPushTrajectoryEnv(
     render_mode="human",
-    trajectory_type=TRAJECTORY_TYPE
+    trajectory_type= TRAJECTORY_TYPE # "curved"
 )
 print("Environment created.")
 
@@ -267,6 +271,14 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 
 # Point directly to 'best_model.zip' inside the specific version folder
 model_path = os.path.join(current_dir, "saved_models_new", MODEL_DIR, "best_model.zip")
+
+
+
+# # =========================FOR CURRICULUM LEARNING RUN=============================
+# # Point to the final phase of the curriculum
+# PHASE_FOLDER = "phase_4_s_curve" # Or whatever the exact folder name is in your directory
+
+# model_path = os.path.join(current_dir, "saved_models_new", MODEL_DIR, PHASE_FOLDER, "best_model.zip")
 
 if not os.path.exists(model_path):
     print(f"Error: Model file not found at {model_path}")

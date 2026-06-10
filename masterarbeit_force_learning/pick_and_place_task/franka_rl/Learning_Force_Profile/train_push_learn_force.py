@@ -190,7 +190,8 @@ ALGORITHM = "PPO"
 # TRAJECTORY_TYPE = "curved"
 TRAJECTORY_TYPE = "s_curve"
 TOTAL_TIMESTEPS = 2_000_000
-MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v37_force"
+# MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v37_force"
+MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v55_force_normal_frames"
 
 # ==================== FOLDER SETUP ====================
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -211,7 +212,7 @@ print("="*60)
 
 # Create training environment
 env = PandaPushTrajectoryEnv(
-    render_mode= "human", # was None,
+    render_mode= "human", # "human", # was None,
     trajectory_type=TRAJECTORY_TYPE
 )
 print("Environment Created!!!!!")
@@ -248,7 +249,7 @@ model = PPO(
     gamma=0.99,
     gae_lambda=0.95,
     clip_range=0.2,
-    ent_coef=0.01,  # Exploration bonus
+    ent_coef=0.02, # was 0.01 <- Exploration at the inflection point! # Exploration bonus
     vf_coef=0.5,
     max_grad_norm=0.5,
     tensorboard_log=os.path.join(save_folder, "tensorboard_logs"), # Nested inside v25
