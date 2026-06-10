@@ -1,16 +1,14 @@
 """
 env.py
-Panda Push Trajectory Environment with Pure Impedance Control.
+Panda Push Trajectory Environment — pure task-space FORCE control.
 
-This environment implements a velocity-based control approach where:
-    - RL learns: planar velocity and yaw velocity (vx, vy, wz)
-    - Controller: Converts these to a moving virtual target (p_des).
-    - Physics: Impedance control generates force naturally based on position error.
+Action space: [Fx_P, Fy_P, Tz] in [-1, 1]
+    - Fx_P: force along the path tangent t_hat   (scaled to +/- f_max)
+    - Fy_P: force along the path binormal b_hat   (scaled to +/- f_max)
+    - Tz  : yaw torque about n_hat                (scaled to +/- tau_rot_max)
+Height along n_hat is a PD controller, not an action.
 
-Action space: [vx, vy, wz] - all in [-1, 1]
-    - vx, vy: Desired planar end-effector velocity (scaled to ±v_max)
-    - wz: Desired yaw angular velocity (scaled to ±w_max)
-
+Control: tau = J_base^T @ wrench_base + qfrc_bias
 The robot pushes a bottle along a predefined trajectory.
 """
 
@@ -65,7 +63,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Initialize managers
         self._init_managers()
 
-        # Action space: [vx, vy, wz, f]
+        # Action space: [Fx, Fy, Tz]
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -117,6 +115,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         self.goal_site_id = self.model.site("goal").id
         self.left_finger_body_id = self.model.body("left_finger").id
         self.right_finger_body_id = self.model.body("right_finger").id
+        self.gripper_site_id = self.model.site("gripper_center").id
 
         self.robot_contact_bodies = {
             self.hand_body_id,
@@ -185,12 +184,11 @@ class PandaPushTrajectoryEnv(gym.Env):
     def _print_init_info(self):
         """Print initialization information."""
         print(f"\n{'=' * 60}")
-        print("PURE IMPEDANCE CONTROL (VELOCITY ONLY)")
+        print("PURE FORCE CONTROL (WRENCH)") # Update this text
         print(f"{'=' * 60}")
-        print(f"Action space: [vx, vy, wz]") # Removed f
-        print(f"Control: τ = J^T × (Kp·Δp + Kd·Δv) + τ_gravity") # Removed Kf·ΔF
-        print(f"Gains: Kp={self.config.Kp}, Kd={self.config.Kd}") # Removed Kf
-        print(f"Limits: v_max={self.config.v_max} m/s") # Removed f_max
+        print(f"Action space: [Fx, Fy, Tz]") # Update labels
+        print(f"Control: τ = J^T × F_cmd + τ_gravity") # Update equation
+        print(f"Limits: f_max={self.config.f_max} N, tau_max={self.config.tau_rot_max} Nm") # Update limits
         print(f"{'=' * 60}")
 
     def reset(self, seed=None, options=None):
@@ -218,6 +216,15 @@ class PandaPushTrajectoryEnv(gym.Env):
             tau_gravity = self.data.qfrc_bias[6:13].copy()
             self.data.ctrl[:7] = tau_gravity
             mujoco.mj_step(self.model, self.data)
+
+        # ---- DIAGNOSTIC: where does the gripper site rest? ----
+        # print(f"[RESET] gripper_center site z = {self.push_controller.get_ee_position()[2]:.4f}")
+        # print(f"[RESET] bottle z             = {self.data.xpos[self.bottle_body_id][2]:.4f}")
+        # print(f"[RESET] target_z (config)    = {self.config.target_z:.4f}")
+        ee_world = self.data.site_xpos[self.gripper_site_id]
+        print(f"[RESET] gripper_center world z = {ee_world[2]:.4f}")
+        print(f"[RESET] bottle world z         = {self.data.xpos[self.bottle_body_id][2]:.4f}")
+        print(f"[RESET] target_z (world)       = {self.config.target_z:.4f}")
 
         # Get bottle start position
         bottle_start = self.data.xpos[self.bottle_body_id].copy()
@@ -256,7 +263,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         Execute one environment step.
 
         Args:
-            action: RL action [vx, vy, wz, f] in [-1, 1]
+            action: RL action [Fx, Fy, Tz] in [-1, 1]
 
         Returns:
             observation: New observation
@@ -271,13 +278,19 @@ class PandaPushTrajectoryEnv(gym.Env):
         for _ in range(self.config.n_substeps):
             mujoco.mj_step(self.model, self.data)
 
+        # Grab true measured forces AFTER physics has stepped
+        F_meas_base, tau_meas_base = self.push_controller.get_measured_wrench()
+        rpy = self.push_controller.get_rpy()
+
         obs = self.obs_builder.get_observation()
         
         # Pass pure push logic to reward computer
-        reward, info = self.reward_computer.compute_reward()
+        reward, info = self.reward_computer.compute_reward(action)
 
         # Get positions and force for logging
-        hand_pos = self.data.xpos[self.hand_body_id].copy()
+
+        # ee_pos = self.push_controller.get_ee_position()
+        ee_pos = self.data.site_xpos[self.gripper_site_id].copy()
         bottle_pos = self.data.xpos[self.bottle_body_id].copy()
         force = self.contact_manager.get_contact_force()
 
@@ -287,29 +300,34 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Enhanced debug print
         if self.episode_length % 5 == 0:
             self.debug_printer.print_step(
-                self.episode_length, hand_pos, bottle_pos, action, reward, info,
+                self.episode_length, ee_pos, bottle_pos, action, reward, info,
                 self.push_controller.last_push_dir,
                 None,  # p_des removed (pure velocity control)
-                self.push_controller.last_F_cmd,
+                self.push_controller.last_F_cmd_base_total, # <- now with new total
             )
 
             # Log to CSV
             self.step_logger.log(
                 self.total_steps, self.episode_length, self.episode_num,
-                hand_pos, bottle_pos, None,  # p_des removed
+                ee_pos, bottle_pos, None, # <- Added None for p_des
                 action, self.config,
-                self.push_controller.last_push_dir, 
-                #self.push_controller.last_F_des,
-                self.push_controller.last_F_cmd, 
-                force,
-                reward, info,
-                v_current
+                self.push_controller.last_push_dir,  # Added push_dir back
+                self.push_controller.last_F_cmd_ee,
+                self.push_controller.last_tau_cmd_ee,
+                self.push_controller.last_F_cmd_base_pure,
+                self.push_controller.last_tau_cmd_base,
+                F_meas_base,
+                tau_meas_base,
+                rpy,
+                force,                               # Added physical contact force back
+                reward, info, v_current
             )
 
         self.logger.log_step(
             force=self.contact_manager.get_contact_force(),
             deviation=info.get("deviation", 0.0),
-            velocity=np.array([action[0]*self.config.v_max, action[1]*self.config.v_max, 0]),
+            # Updated: f_max so the logger records the actual commanded force
+            velocity=np.array([action[0]*self.config.f_max, action[1]*self.config.f_max, 0]),
             action=action,
             tilt=info.get("bottle_tilt", 1.0)
         )
@@ -331,34 +349,15 @@ class PandaPushTrajectoryEnv(gym.Env):
         if self.render_mode == "human":
             self.render()
 
+        info['F_cmd_path'] = self.push_controller.last_F_cmd_ee  # The raw RL action scaled to Newtons
+        info['F_cmd_base'] = self.push_controller.last_F_cmd_base_pure # The rotated global command
+        info['R_path'] = getattr(self.push_controller, 'last_R_path', np.eye(3))
+        info['F_meas_base'] = self.contact_manager.get_contact_force() # The actual measured force
+        info['t_hat'] = self.push_controller.last_t_hat
+        info['b_hat'] = self.push_controller.last_b_hat
+
         return obs, reward, terminated, truncated, info
     
-    # def _print_debug_info(self, info, action, reward):
-    #     """Print detailed debug information every N steps."""
-    #     progress = info.get("progress", 0.0)
-    #     deviation = info.get("deviation", 0.0)
-    #     tilt = info.get("bottle_tilt", 1.0)
-    #     force_mag = info.get("force_magnitude", 0.0)
-    #     is_touching = info.get("is_touching", False)
-        
-    #     # Get actual coordinates
-    #     hand_pos = self.data.xpos[self.hand_body_id]
-    #     bottle_pos = self.data.xpos[self.bottle_body_id]
-        
-    #     contact_str = "CONTACT" if is_touching else "NO CONTACT"
-        
-    #     print(f"Step {self.episode_length:4d} | {contact_str} | Step Reward: {reward:6.2f}")
-    #     print(f"  Hand Pos:   ({hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f})")
-    #     print(f"  Bottle Pos: ({bottle_pos[0]:.3f}, {bottle_pos[1]:.3f}, {bottle_pos[2]:.3f})")
-    #     # Action is [vx, vy, wz, f]
-    #     print(f"  NN Action:  vx={action[0]:5.2f}, vy={action[1]:5.2f}, wz={action[2]:5.2f}, f={action[3]:5.2f}")
-    #     print(f"  Status:     Prog={progress*100:5.1f}%, Dev={deviation*100:4.1f}cm, Tilt={tilt:.4f}, Force={force_mag:4.1f}N")
-    #     print("-" * 65)
-
-    # def render(self):
-    #     """Render the environment."""
-    #     if self.render_mode == "human":
-    #         self.renderer.render(self.traj_manager.trajectory)
 
     def render(self):
         """Render the environment."""

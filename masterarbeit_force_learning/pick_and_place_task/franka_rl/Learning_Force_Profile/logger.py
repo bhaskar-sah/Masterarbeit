@@ -1,11 +1,18 @@
 """
 logger.py
-Episode Logger for Force-Velocity Control.
+Episode Logger for task-space FORCE control.
 
-Logs:
-    - force_profile: Contact force at each step
-    - velocity_profile: Commanded velocity at each step
-    - deviation: Path deviation magnitude at each step
+Per-step episode logs:
+    - force_profile      : WORLD-frame contact force (robot -> bottle) at each step
+    - cmd_force_profile  : commanded planar force [Ft, Fb, 0] in N, path frame {P}
+    - deviation          : path deviation magnitude (m) at each step
+    - tilt_profile       : bottle upright component (z-cap . world-z)
+    - action_profile     : raw RL action [Ft_norm, Fb_norm, Tz_norm] in [-1, 1]
+
+NOTE: log_step()'s argument is still named `velocity=` for backward
+compatibility with env.py's call site, but it carries COMMANDED FORCE
+(path frame, Newtons), not a velocity. The stored profile and every output
+column / summary key are labelled as force.
 """
 
 import numpy as np
@@ -14,9 +21,7 @@ import os
 
 
 class EpisodeLogger:
-    """
-    Manages per-step episode logs for force-velocity control.
-    """
+    """Per-episode logs for task-space force control."""
 
     def __init__(self):
         self.reset()
@@ -24,9 +29,8 @@ class EpisodeLogger:
     def reset(self):
         """Clear all logs at the start of a new episode."""
         self.force_profile: list = []
-        self.stiffness_profile: list = []  # Keep for compatibility, will be zeros
+        self.cmd_force_profile: list = []   # commanded planar force [Ft, Fb, 0] (N), path frame {P}
         self.deviation: list = []
-        self.velocity_profile: list = []
         self.action_profile: list = []
         self.tilt_profile: list = []
 
@@ -37,24 +41,20 @@ class EpisodeLogger:
         Log data for one step.
 
         Args:
-            force: Contact force [fx, fy, fz]
-            stiffness: (Legacy) Stiffness values (not used, kept for compatibility)
-            deviation: Path deviation magnitude
-            velocity: Commanded velocity [vx, vy, vz] (optional)
-            action: Raw RL action [a0, a1, a2, a3] (optional)
-            tilt: Bottle tilt value
+            force:    WORLD-frame contact force [fx, fy, fz] (robot -> bottle)
+            stiffness:(legacy, unused) accepted for backward compatibility
+            deviation:path deviation magnitude (m)
+            velocity: (LEGACY NAME) commanded planar force [Ft, Fb, 0] in N,
+                      expressed in the path frame {P}. NOT a velocity.
+            action:   raw RL action [Ft_norm, Fb_norm, Tz_norm] in [-1, 1]
+            tilt:     bottle upright component (1 = upright)
         """
         self.force_profile.append(force.copy() if force is not None else np.zeros(3))
         self.deviation.append(float(deviation))
         self.tilt_profile.append(float(tilt))
 
-        if stiffness is not None:
-            self.stiffness_profile.append(stiffness.copy())
-        else:
-            self.stiffness_profile.append(np.zeros(2))
-
         if velocity is not None:
-            self.velocity_profile.append(velocity.copy())
+            self.cmd_force_profile.append(velocity.copy())
 
         if action is not None:
             self.action_profile.append(action.copy())
@@ -74,11 +74,14 @@ class EpisodeLogger:
             summary["force_max"] = float(np.max(force_mags))
             summary["force_std"] = float(np.std(force_mags))
 
-        if self.velocity_profile:
-            velocities = np.array(self.velocity_profile)
-            vel_mags = np.linalg.norm(velocities, axis=1)
-            summary["velocity_mean"] = float(np.mean(vel_mags))
-            summary["velocity_max"] = float(np.max(vel_mags))
+        # Commanded planar force magnitude (path frame), in Newtons.
+        # (Previously mislabelled as "velocity_*".)
+        if self.cmd_force_profile:
+            cf = np.array(self.cmd_force_profile)
+            cf_mag = np.linalg.norm(cf[:, :2], axis=1)
+            summary["force_cmd_mean"] = float(np.mean(cf_mag))
+            summary["force_cmd_max"] = float(np.max(cf_mag))
+            summary["force_cmd_std"] = float(np.std(cf_mag))
 
         if self.deviation:
             devs = np.array(self.deviation)
@@ -89,11 +92,6 @@ class EpisodeLogger:
             tilts = np.array(self.tilt_profile)
             summary["tilt_min"] = float(np.min(tilts))
             summary["tilt_mean"] = float(np.mean(tilts))
-
-        if self.action_profile:
-            actions = np.array(self.action_profile)
-            summary["force_cmd_mean"] = float(np.mean(actions[:, 3]))
-            summary["force_cmd_std"] = float(np.std(actions[:, 3]))
 
         summary["total_steps"] = len(self.force_profile)
 
@@ -109,12 +107,15 @@ class EpisodeLogger:
         with open(filepath, "w", newline="") as f:
             writer = csv.writer(f)
 
-            # Header
-            header = ["step", "Fx", "Fy", "Fz", "F_mag", "deviation_m", "tilt"]
-            if self.velocity_profile:
-                header.extend(["vx", "vy", "vz", "v_mag"])
+            # Header. F_contact_* are the WORLD-frame contact force (robot -> bottle).
+            header = ["step", "F_contact_x", "F_contact_y", "F_contact_z",
+                      "F_contact_mag", "deviation_m", "tilt"]
+            if self.cmd_force_profile:
+                # commanded force, path frame {P}: [t, b, n(=0)]
+                header.extend(["F_cmd_t", "F_cmd_b", "F_cmd_n", "F_cmd_mag"])
             if self.action_profile:
-                header.extend(["a0_vx", "a1_vy", "a2_vz", "a3_f"])
+                # raw action: [tangent, binormal, yaw], normalised to [-1, 1]
+                header.extend(["a_ft", "a_fb", "a_tau_z"])
             writer.writerow(header)
 
             for i in range(steps):
@@ -133,14 +134,14 @@ class EpisodeLogger:
                     round(float(tilt), 5),
                 ]
 
-                if self.velocity_profile and i < len(self.velocity_profile):
-                    vel = self.velocity_profile[i]
-                    vel_mag = float(np.linalg.norm(vel))
+                if self.cmd_force_profile and i < len(self.cmd_force_profile):
+                    cf = np.asarray(self.cmd_force_profile[i], dtype=float)
+                    cf_mag = float(np.linalg.norm(cf[:2]))
                     row.extend([
-                        round(float(vel[0]), 5),
-                        round(float(vel[1]), 5),
-                        round(float(vel[2]), 5),
-                        round(vel_mag, 5),
+                        round(float(cf[0]), 5),
+                        round(float(cf[1]), 5),
+                        round(float(cf[2]), 5),
+                        round(cf_mag, 5),
                     ])
 
                 if self.action_profile and i < len(self.action_profile):
@@ -149,7 +150,6 @@ class EpisodeLogger:
                         round(float(action[0]), 5),
                         round(float(action[1]), 5),
                         round(float(action[2]), 5),
-                        round(float(action[3]), 5),
                     ])
 
                 writer.writerow(row)

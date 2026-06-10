@@ -52,6 +52,18 @@ class TrajectoryManager:
             x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * mid_point[0] + t ** 2 * goal[0]
             y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * mid_point[1] + t ** 2 * goal[1]
             self.trajectory = np.stack([x, y], axis=1).astype(np.float32)
+
+        elif self.trajectory_type == "curved_opposite":
+            # Quadratic Bezier curve pulling to the LEFT
+            t = np.linspace(0, 1, n_points)
+            
+            # Straight line is at x=0.40. Original curve goes +0.15 to x=0.55.
+            # Opposite curve goes -0.15 to x=0.25.
+            mid_point = np.array([0.25, 0.0]) 
+            
+            x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * mid_point[0] + t ** 2 * goal[0]
+            y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * mid_point[1] + t ** 2 * goal[1]
+            self.trajectory = np.stack([x, y], axis=1).astype(np.float32)
  
         elif self.trajectory_type == "s_curve":
             t = np.linspace(0, 1, n_points)

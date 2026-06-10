@@ -121,11 +121,11 @@ class ContactManager:
             # MuJoCo convention: c_force is force from body2 on body1
             # We want: force from robot on bottle
             if robot_is_body1 and bottle_is_body2:
-                # body2 (bottle) pushes body1 (robot), so the returned force is bottle→robot
-                # We want robot→bottle, so flip sign
+                # body2 (bottle) pushes body1 (robot), so the returned force is bottle->robot
+                # We want robot->bottle
                 force_robot_on_bottle = force_world
             else:  # robot_is_body2 and bottle_is_body1
-                # body2 (robot) pushes body1 (bottle), so returned force IS robot→bottle
+                # body2 (robot) pushes body1 (bottle), so returned force IS robot->bottle
                 force_robot_on_bottle = -force_world
             
             total_force += force_robot_on_bottle.astype(np.float32)

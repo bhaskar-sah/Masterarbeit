@@ -260,7 +260,7 @@
                       <!-- <site name="hand_center" pos="0 0 0.03" size="0.02" rgba="1 0 0 0.5"/> -->
                       <!-- NEW: Gripper center site - point between fingertips for pushing -->
                       <!-- pos="0 0 0.1" = 0.0584 (finger offset) + ~0.04 (fingertip length) -->
-                      <site name="gripper_center" pos="0 0 0.1" size="0.015" rgba="0 1 0 1"/>
+                      <site name="gripper_center" pos="0 0 0.1" size="0.01" rgba="0 1 0 1"/>
                       <body name="left_finger" pos="0 0 0.0584">
                         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
                         <joint name="finger_joint1" class="finger" range="0 0"/>

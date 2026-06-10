@@ -1,10 +1,17 @@
 # debug_utils.py
 """
-Debug Utilities for Panda Push Training.
+Debug Utilities for Panda Push Training (task-space FORCE control).
 
 Provides:
-1. Enhanced console debug printing
-2. CSV step logger for post-training analysis
+    1. DebugPrinter - enhanced console debug output during training
+    2. StepLogger   - per-step CSV logger for post-training analysis
+
+Frame convention (see push_controller.py):
+    {B} base frame at link0   - v_curr_* and *_base_* columns are base-frame
+    {P} path frame [t, b, n]  - the action acts here; F_cmd_path_* are along [t, b, n]
+    World frame               - ee_*, bottle_*, and F_contact_* are world-frame
+In the current scene the base has identity orientation, so base- and
+world-frame vectors are numerically identical; the labels record intent.
 """
 
 import numpy as np
@@ -19,11 +26,9 @@ class DebugPrinter:
         self.config = config
         self.print_every = print_every
 
-    def print_step(self, step, hand_pos, bottle_pos, action, reward,
+    def print_step(self, step, ee_pos, bottle_pos, action, reward,
                    info, push_dir, p_des, F_cmd):
-        """
-        Print detailed debug info for one step.
-        """
+        """Print detailed debug info for one step."""
         if step % self.print_every != 0:
             return
 
@@ -35,53 +40,45 @@ class DebugPrinter:
 
         contact_str = "CONTACT" if is_touching else "NO CONTACT"
 
-        # Scaled actions (Now only 3D)
-        vx_scaled = action[0] * self.config.v_max
-        vy_scaled = action[1] * self.config.v_max
-        wz_scaled = action[2] * self.config.w_max
+        # Scaled actions (path frame {P})
+        ft_scaled = action[0] * self.config.f_max           # along t_hat
+        fb_scaled = action[1] * self.config.f_max           # along b_hat
+        tau_z_scaled = action[2] * self.config.tau_rot_max  # yaw about n_hat
 
-        # Hand-to-bottle vector
-        h2b = bottle_pos[:2] - hand_pos[:2]
+        # ee-to-bottle (both world frame here)
+        h2b = bottle_pos[:2] - ee_pos[:2]
         h2b_dist = np.linalg.norm(h2b)
 
-        # Position error magnitude
-        p_error = np.linalg.norm(p_des - hand_pos) if p_des is not None else 0.0
-
-        # F_cmd magnitude
         F_cmd_mag = np.linalg.norm(F_cmd) if F_cmd is not None else 0.0
 
         print(f"\nStep {step:4d} | {contact_str} | Reward: {reward:7.2f}")
-        print(f"  ── Positions ──")
-        print(f"    Hand:    ({hand_pos[0]:.3f}, {hand_pos[1]:.3f}, {hand_pos[2]:.3f})")
+        print(f"  -- Positions (world) --")
+        print(f"    ee:      ({ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f})")
         print(f"    Bottle:  ({bottle_pos[0]:.3f}, {bottle_pos[1]:.3f}, {bottle_pos[2]:.3f})")
-        print(f"    p_des:   ({p_des[0]:.3f}, {p_des[1]:.3f}, {p_des[2]:.3f})" if p_des is not None else "    p_des:   None")
-        print(f"    H→B dist: {h2b_dist*100:.1f}cm")
-        print(f"  ── Actions (raw → scaled) ──")
-        print(f"    vx: {action[0]:+5.2f} → {vx_scaled*1000:+6.2f} mm/s")
-        print(f"    vy: {action[1]:+5.2f} → {vy_scaled*1000:+6.2f} mm/s")
-        print(f"    wz: {action[2]:+5.2f} → {wz_scaled:+6.2f} rad/s")
-        print(f"  ── Forces ──")
-        print(f"    Push dir:    ({push_dir[0]:+.3f}, {push_dir[1]:+.3f})")
-        print(f"    F_cmd total: {F_cmd_mag:.2f} N")
-        print(f"    F_measured:  {force_mag:.2f} N")
-        print(f"    p_error:     {p_error*1000:.2f} mm")
-        print(f"  ── Task ──")
+        print(f"    ee->B dist: {h2b_dist*100:.1f}cm")
+        print(f"  -- Actions (path frame [t, b, n]) --")
+        print(f"    Ft: {action[0]:+5.2f} -> {ft_scaled:+6.2f} N    (along tangent)")
+        print(f"    Fb: {action[1]:+5.2f} -> {fb_scaled:+6.2f} N    (along binormal)")
+        print(f"    Tz: {action[2]:+5.2f} -> {tau_z_scaled:+6.2f} N.m  (yaw)")
+        print(f"  -- Forces --")
+        print(f"    Push tangent (base): ({push_dir[0]:+.3f}, {push_dir[1]:+.3f})")
+        print(f"    F_cmd total (base):  {F_cmd_mag:.2f} N")
+        print(f"    F_measured (contact):{force_mag:.2f} N")
+        print(f"  -- Task --")
         print(f"    Progress: {progress*100:5.1f}%  |  Dev: {deviation*100:4.1f}cm  |  Tilt: {tilt:.4f}")
-        print(f"  ── Rewards ──")
+        print(f"  -- Rewards --")
         print(f"    r_prog: {info.get('r_progress', 0):+6.3f}  "
               f"r_dev: {info.get('r_deviation', 0):+6.3f}  "
               f"r_stab: {info.get('r_stability', 0):+6.3f}  "
               f"r_contact: {info.get('r_contact', 0):+6.3f}  "
               f"r_align: {info.get('r_alignment', 0):+6.3f}  "
-              f"r_pos: {info.get('r_position', 0):+6.3f}  "
-              f"r_vel: {info.get('r_velocity',0):+6.6f}")
-        print(f"{'─' * 70}")
+              f"r_vel: {info.get('r_velocity', 0):+6.6f}  "
+              f"t_pen: {info.get('time_penalty', 0):+6.3f}")
+        print("-" * 70)
 
 
 class StepLogger:
-    """
-    Logs per-step data to CSV for post-training analysis.
-    """
+    """Logs per-step data to CSV for post-training analysis."""
 
     def __init__(self, filepath, flush_every=1000):
         self.filepath = filepath
@@ -94,71 +91,90 @@ class StepLogger:
         self.file = open(filepath, "w", newline="")
         self.writer = csv.writer(self.file)
 
-        # Write header
+        # Header.
+        #   ee_*            : WORLD frame, gripper_center site
+        #   bottle_*        : WORLD frame
+        #   v_curr_*        : base frame {B} (= world here)
+        #   push_dir_*      : path tangent t_hat (base frame)
+        #   F_cmd_path_*    : commanded wrench in path frame {P} = [t, b, n]
+        #                     (the n component of force is the PD height controller)
+        #   *_base_*        : base frame {B}
+        #   F_contact_*     : WORLD frame contact force (robot -> bottle)
         self.writer.writerow([
             "global_step", "episode_step", "episode_num",
-            # Positions
-            "hand_x", "hand_y", "hand_z",
+            # Positions (world)
+            "ee_x", "ee_y", "ee_z",
             "bottle_x", "bottle_y", "bottle_z",
-            "p_des_x", "p_des_y", "p_des_z",
-            "hand_to_bottle_dist",
+            "ee_to_bottle_dist",
             # Raw actions (3D)
-            "a_vx", "a_vy", "a_wz",
+            "a_ft", "a_fb", "a_tau_z",
             # Scaled actions
-            "vx_mps", "vy_mps", "wz_rps",
-            # ACTUAL VELOCITY
+            "ft_N", "fb_N", "tau_z_Nm",
+            # Measured EE velocity (base)
             "v_curr_x", "v_curr_y", "v_curr_z",
-            # Forces
+            # Forces & torques
             "push_dir_x", "push_dir_y",
-            "F_cmd_mag", "F_measured_mag",
-            "F_meas_x", "F_meas_y", "F_meas_z",
+            "F_cmd_path_t", "F_cmd_path_b", "F_cmd_path_n",
+            "tau_cmd_path_t", "tau_cmd_path_b", "tau_cmd_path_n",
+            "F_cmd_base_x", "F_cmd_base_y", "F_cmd_base_z",
+            "tau_cmd_base_x", "tau_cmd_base_y", "tau_cmd_base_z",
+            "F_meas_base_x", "F_meas_base_y", "F_meas_base_z",
+            "tau_meas_base_x", "tau_meas_base_y", "tau_meas_base_z",
+            "F_contact_world_x", "F_contact_world_y", "F_contact_world_z",
+            "roll", "pitch", "yaw",
             # Task state
             "progress", "deviation_m", "tilt",
             "is_touching",
             # Rewards
             "reward_total",
             "r_progress", "r_deviation", "r_stability",
-            "r_contact", "r_alignment", "r_position", "r_velocity",
-            # Position error
-            "p_error_mag",
+            "r_contact", "r_alignment", "r_velocity", "time_penalty",
         ])
 
     def log(self, global_step, episode_step, episode_num,
-            hand_pos, bottle_pos, p_des,
+            ee_pos, bottle_pos, p_des,
             action, config,
-            push_dir, F_cmd, F_measured,
+            push_dir, F_cmd_path, tau_cmd_path, F_cmd_base, tau_cmd_base,
+            F_meas_base, tau_meas_base,
+            rpy, F_contact,
             reward, info, v_current):
-        """Log one step of data."""
+        """
+        Log one step of data.
 
+        Frames: ee_pos / bottle_pos / F_contact are WORLD; v_current and *_base
+        are base frame {B}; F_cmd_path / tau_cmd_path are path frame {P} = [t, b, n].
+        (F_cmd_path / tau_cmd_path arrive as push_controller.last_F_cmd_ee /
+        last_tau_cmd_ee, which already hold the path-frame command.)
+        """
         # Scaled actions
-        vx_scaled = action[0] * config.v_max
-        vy_scaled = action[1] * config.v_max
-        wz_scaled = action[2] * config.w_max
+        ft_scaled = action[0] * config.f_max
+        fb_scaled = action[1] * config.f_max
+        tau_z_scaled = action[2] * config.tau_rot_max
 
-        h2b_dist = np.linalg.norm(bottle_pos[:2] - hand_pos[:2])
-        F_cmd_mag = np.linalg.norm(F_cmd) if F_cmd is not None else 0.0
-        F_meas_mag = np.linalg.norm(F_measured)
-        p_error = np.linalg.norm(p_des - hand_pos) if p_des is not None else 0.0
+        h2b_dist = np.linalg.norm(bottle_pos[:2] - ee_pos[:2])
 
         self.writer.writerow([
             global_step, episode_step, episode_num,
-            # Positions
-            f"{hand_pos[0]:.5f}", f"{hand_pos[1]:.5f}", f"{hand_pos[2]:.5f}",
+            # Positions (world)
+            f"{ee_pos[0]:.5f}", f"{ee_pos[1]:.5f}", f"{ee_pos[2]:.5f}",
             f"{bottle_pos[0]:.5f}", f"{bottle_pos[1]:.5f}", f"{bottle_pos[2]:.5f}",
-            f"{p_des[0]:.5f}" if p_des is not None else "",
-            f"{p_des[1]:.5f}" if p_des is not None else "",
-            f"{p_des[2]:.5f}" if p_des is not None else "",
             f"{h2b_dist:.5f}",
             # Raw actions
             f"{action[0]:.4f}", f"{action[1]:.4f}", f"{action[2]:.4f}",
             # Scaled actions
-            f"{vx_scaled:.5f}", f"{vy_scaled:.5f}", f"{wz_scaled:.4f}",
-            # ACTUAL VELOCITY
+            f"{ft_scaled:.5f}", f"{fb_scaled:.5f}", f"{tau_z_scaled:.4f}",
+            # Measured EE velocity (base)
             f"{v_current[0]:.5f}", f"{v_current[1]:.5f}", f"{v_current[2]:.5f}",
-            # Forces
+            # Forces & torques
             f"{push_dir[0]:.4f}", f"{push_dir[1]:.4f}",
-            f"{F_cmd_mag:.4f}", f"{F_meas_mag:.4f}",
-            f"{F_measured[0]:.4f}", f"{F_measured[1]:.4f}", f"{F_measured[2]:.4f}",
+            f"{F_cmd_path[0]:.4f}", f"{F_cmd_path[1]:.4f}", f"{F_cmd_path[2]:.4f}",
+            f"{tau_cmd_path[0]:.4f}", f"{tau_cmd_path[1]:.4f}", f"{tau_cmd_path[2]:.4f}",
+            f"{F_cmd_base[0]:.4f}", f"{F_cmd_base[1]:.4f}", f"{F_cmd_base[2]:.4f}",
+            f"{tau_cmd_base[0]:.4f}", f"{tau_cmd_base[1]:.4f}", f"{tau_cmd_base[2]:.4f}",
+            f"{F_meas_base[0]:.4f}", f"{F_meas_base[1]:.4f}", f"{F_meas_base[2]:.4f}",
+            f"{tau_meas_base[0]:.4f}", f"{tau_meas_base[1]:.4f}", f"{tau_meas_base[2]:.4f}",
+            f"{F_contact[0]:.4f}", f"{F_contact[1]:.4f}", f"{F_contact[2]:.4f}",
+            f"{rpy[0]:.4f}", f"{rpy[1]:.4f}", f"{rpy[2]:.4f}",
             # Task state
             f"{info.get('progress', 0):.5f}",
             f"{info.get('deviation', 0):.5f}",
@@ -171,10 +187,8 @@ class StepLogger:
             f"{info.get('r_stability', 0):.5f}",
             f"{info.get('r_contact', 0):.5f}",
             f"{info.get('r_alignment', 0):.5f}",
-            f"{info.get('r_position', 0):.5f}",
             f"{info.get('r_velocity', 0):.5f}",
-            # Position error
-            f"{p_error:.5f}",
+            f"{info.get('time_penalty', 0):.5f}",
         ])
 
         self.step_count += 1

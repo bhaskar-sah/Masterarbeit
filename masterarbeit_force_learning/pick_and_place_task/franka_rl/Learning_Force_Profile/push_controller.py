@@ -8,13 +8,6 @@ import numpy as np
 import mujoco
 
 
-# ============================================================
-# Set from visualize_flange.py output
-# ============================================================
-# FLANGE_PUSH_AXIS_LOCAL = 0   # 0=x, 1=y, 2=z
-# FLANGE_PUSH_SIGN = -1         # Positive X-axis pushes the bottle # +1 (positive x axis) or -1 (negative x-axis)
-
-
 class PushController:
     def __init__(self, model, data, traj_manager, contact_manager,
                  hand_body_id, bottle_body_id, config):
@@ -27,24 +20,12 @@ class PushController:
         self.config = config
 
         self.gripper_site_id = model.site("gripper_center").id
+        self.link0_id = model.body("link0").id
 
         # Gains
-
-        # self.Kp = config.Kp
-        # self.Kd = config.Kd
-        # # self.Kf = config.Kf
-        # self.Kp_rot = config.Kp_rot
-
         self.Kd_rot = config.Kd_rot
-
-        # Limits
-
-        # self.v_max = config.v_max
         
         self.w_max = config.w_max
-        
-        # self.f_max = config.f_max
-        # self.F_FLOOR = config.F_FLOOR
         
         self.dt = config.dt
         self.control_dt = config.control_dt
@@ -57,32 +38,74 @@ class PushController:
         self.last_F_cmd = np.zeros(3)
         
         self.last_push_dir = np.zeros(2)
+        self.last_t_hat = np.zeros(3)
+        self.last_b_hat = np.zeros(3)
 
     def reset(self):
-        pass  # no state to reset — pure force control has no integrators
+        pass  # no state to reset — pure force control has no integrator
+
+    def get_base_pos(self):
+        return self.data.xpos[self.link0_id].copy()
+
+    def get_base_orientation(self):
+        return self.data.xmat[self.link0_id].reshape(3,3).copy()
 
     # ---------- kinematics (SITE-BASED) ----------
     def get_ee_position(self):
-        return self.data.site_xpos[self.gripper_site_id].copy()
+        pos_in_world = self.data.site_xpos[self.gripper_site_id].copy()
+        base_pos_in_world = self.get_base_pos()
+        w_R_b = self.get_base_orientation()
+
+        translation_vector = pos_in_world - base_pos_in_world
+
+        # DEBUG PRINT:
+        # print(f"w_R_b shape: {w_R_b.shape}, pos_in_world shape: {pos_in_world.shape}")
+        ee_pos_base_frame = w_R_b.T @ translation_vector
+
+        # print(f"DEBUG: pos in the word: {pos_in_world}")
+        # print(f"DEBUG: pos in the word: {translation_vector}")
+        # print(f"DEBUG: fRAME ROTATION orientation: {w_R_b}")
+        # print(f"DEBUG: Gripper position relative to base: {ee_pos_base_frame}")
+
+        return ee_pos_base_frame
 
     def get_ee_orientation(self):
-        return self.data.site_xmat[self.gripper_site_id].reshape(3, 3).copy()
+        w_R_EE = self.data.site_xmat[self.gripper_site_id].reshape(3, 3).copy()
+        w_R_b = self.get_base_orientation()
+        return w_R_b.T @ w_R_EE
     
     def get_ee_velocity(self):
         jacp = np.zeros((3, self.model.nv))
         mujoco.mj_jacSite(self.model, self.data, jacp, None, self.gripper_site_id)
-        return jacp @ self.data.qvel
+        vel_world = jacp @ self.data.qvel
+        w_R_b = self.get_base_orientation()
+        return w_R_b.T @ vel_world
 
     def get_ee_angular_velocity(self):
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacSite(self.model, self.data, None, jacr, self.gripper_site_id)
-        return jacr @ self.data.qvel
+        w_world = jacr @ self.data.qvel
+        w_R_b = self.get_base_orientation()
+        return w_R_b.T @ w_world
 
-    def get_jacobian_full(self): # The  Link: https://mujoco.readthedocs.io/en/3.2.0/APIreference/APIfunctions.html#mj-jacsite (see mj_jac)
+    # def get_jacobian_full(self):
+    #     jacp = np.zeros((3, self.model.nv))
+    #     jacr = np.zeros((3, self.model.nv))
+    #     mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.gripper_site_id)
+    #     J_full = np.vstack([jacp, jacr])
+    #     return J_full[:, self.qvel_start:self.qvel_start + self.n_joints]
+
+    def get_jacobian_full(self): 
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.gripper_site_id)
-        J_full = np.vstack([jacp, jacr])
+        
+        # Rotate the MuJoCo World-Jacobian into the Base Frame
+        w_R_b = self.get_base_orientation()
+        jacp_base = w_R_b.T @ jacp
+        jacr_base = w_R_b.T @ jacr
+        
+        J_full = np.vstack([jacp_base, jacr_base])
         return J_full[:, self.qvel_start:self.qvel_start + self.n_joints]
 
     def get_gravity_compensation(self):
@@ -94,80 +117,135 @@ class PushController:
     def get_flange_axis_world(self):
         R_current = self.get_ee_orientation()
         # get local X-Axis of the flange
-        axis = R_current[:, 0]
+        axis = R_current[:, 0].copy()
         axis[2] = 0.0
         norm = np.linalg.norm(axis)
         if norm > 1e-6:
             axis /= norm
         return axis
+    
+    def get_rpy(self):
+        """Calculate Roll, Pitch, Yaw from the rotation matrix."""
+        R = self.get_ee_orientation()
+        yaw = np.arctan2(R[1, 0], R[0, 0])
+        pitch = np.arctan2(-R[2, 0], np.sqrt(R[2, 1]**2 + R[2, 2]**2))
+        roll = np.arctan2(R[2, 1], R[2, 2])
+        return np.array([roll, pitch, yaw])
+
+    def get_measured_wrench(self):
+        """Calculate ACTUAL measured forces/torques from motor outputs."""
+        J_full = self.get_jacobian_full()
+        # Read the actual motor torque applied, minus gravity
+        tau_meas_joints = self.data.qfrc_actuator[self.qvel_start:self.qvel_start + self.n_joints] - self.get_gravity_compensation()
+        W_meas_base = np.linalg.pinv(J_full.T) @ tau_meas_joints
+        return W_meas_base[:3], W_meas_base[3:]
+    
+    # ====================================================================
+    # PATH FRAME — single source of truth
+    # ====================================================================
+    def compute_path_frame_base(self, bottle_xy_world):
+        w_R_b = self.get_base_orientation()
+        base_pos_world = self.get_base_pos()
+ 
+        # --- world-frame path queries ---
+        push_dir_2d_world, _, _ = self.traj_manager.get_push_direction(bottle_xy_world)
+        deviation_vec_world, _ = self.traj_manager.get_path_deviation(bottle_xy_world)
+ 
+        # get_path_deviation returns (closest_pt - bottle_xy), i.e. bottle -> path.
+        # Therefore closest_pt = bottle_xy + deviation_vec.  (Sign fixed.)
+        closest_pt_2d_world = bottle_xy_world + deviation_vec_world
+ 
+        target_z = getattr(self.config, "target_z", 0.84)
+        p_path_world = np.array([closest_pt_2d_world[0], closest_pt_2d_world[1], target_z])
+        t_hat_world = np.array([push_dir_2d_world[0], push_dir_2d_world[1], 0.0])
+        n_hat_world = np.array([0.0, 0.0, 1.0])
+ 
+        # --- into base frame ---
+        p_path = w_R_b.T @ (p_path_world - base_pos_world)   # position: rotate + translate
+        t_hat = w_R_b.T @ t_hat_world                        # direction: rotate only
+        n_hat = w_R_b.T @ n_hat_world
+ 
+        # --- orthonormalise ---
+        nt = np.linalg.norm(t_hat)
+        t_hat = t_hat / nt if nt > 1e-6 else np.array([1.0, 0.0, 0.0])
+        n_hat = n_hat / np.linalg.norm(n_hat)
+        b_hat = np.cross(n_hat, t_hat)
+        b_hat /= np.linalg.norm(b_hat)
+ 
+        R_path = np.column_stack((t_hat, b_hat, n_hat))
+        return R_path, t_hat, b_hat, n_hat, p_path
+
 
     def compute_torque(self, action, tilt=None):
-        # ====================================================================
-        # 1. READ ACTIONS
-        # Action: [Fx, Fy, Wz] (Normalized -1 to 1)
-        # Action: [a0, a1, wz] - no differen modes (JUST force - as MARKO suggested)
-        #         a0=Fx, a1=Fy (in EE frame)
-        # ====================================================================
-        # wz_cmd = action[2] * self.w_max
+            # ====================================================================
+            # 1. GET ROBOT STATE (Already in Base Frame)
+            # ====================================================================
+            p_ee = self.get_ee_position()
+            v_ee = self.get_ee_velocity()
+            
+            # ====================================================================
+            # 2. GET PATH STATE (Query in World, Convert to Base)
+            # ====================================================================
+            bottle_xy_world = self.data.xpos[self.bottle_body_id][:2].copy()
+            R_path, t_hat, b_hat, n_hat, p_path = self.compute_path_frame_base(bottle_xy_world)
 
-        # ====================================================================
-        # 2. PURE PLANAR FORCE IN END-EFFECTOR FRAME
-        # No negative sign, No Z-axis forces.
-        # use ee local body frame
-        # ====================================================================
-        F_cmd_ee = np.array([
-            action[0] * self.config.f_max, 
-            action[1] * self.config.f_max, 
-            0.0  # Z-force is strictly 0
-        ])
+            # ====================================================================
+            # 3. HEIGHT CONTROL (Generalized Dot Product)
+            # ====================================================================
+            delta_p = p_ee - p_path
+            d = np.dot(delta_p, n_hat)
+            d_dot = np.dot(v_ee, n_hat)
+            
+            # d_des is usually 0.0 if you want to be exactly on the path
+            d_des = 0.0 
+            
+            F_normal = (
+                self.config.Kz * (d_des - d) 
+                - self.config.Dz * d_dot
+            )
 
-        tau_rot_cmd = np.array([
-            0.0,
-            0.0,
-            action[2] * self.config.tau_rot_max
-        ])
+            # ====================================================================
+            # 4. RL POLICY IN PATH FRAME
+            # ====================================================================
+            F_path = np.array([
+                action[0] * self.config.f_max,
+                action[1] * self.config.f_max,
+                F_normal,
+            ])
+            
+            Tau_path = np.array([
+                0.0,
+                0.0,
+                action[2] * self.config.tau_rot_max,
+            ])
 
-        # ====================================================================
-        # 3. ROTATE FORCE TO BASE FRAME (Required for MuJoCo Jacobian) - mj_jac is converts in base(/space/word)
-        # ====================================================================
-        R_curr = self.get_ee_orientation()
-        F_cmd_base = R_curr @ F_cmd_ee
-        tau_rot_cmd_base = R_curr @ tau_rot_cmd
+            # ====================================================================
+            # 5. TRANSFORM TO BASE FRAME {p} -> {B}
+            # ====================================================================
+            F_base = R_path @ F_path
+            Tau_task_base = R_path @ Tau_path
 
-        # Hold the exact Z-height (0.84m) using impedance control
-        current_z = self.get_ee_position()[2]
-        current_vz = self.get_ee_velocity()[2]
 
-        target_z = 0.84
-        kp_z = 1000.0
-        kd_z = 50.0
+            # ====================================================================
+            # 7. CALCULATE JOINT TORQUES
+            # ====================================================================
+            wrench_base = np.concatenate([F_base, Tau_task_base])         
+            J_full = self.get_jacobian_full()
+            tau_task = J_full.T @ wrench_base
+            tau = tau_task + self.get_gravity_compensation()
 
-        # Override the floating Z-command with the holding force
-        F_cmd_base[2] = kp_z * (target_z - current_z) - kd_z * current_vz
+            tau_max = np.array([87, 87, 87, 87, 12, 12, 12])
+            tau = np.clip(tau, -tau_max, tau_max)
 
-        # # ====================================================================
-        # # 4. ORIENTATION DAMPING (Keep wrist stable)
-        # # ====================================================================
-        # omega_current_base = self.get_ee_angular_velocity()
-        # omega_des_ee = np.array([0.0, 0.0, wz_cmd])
-        # omega_des_base = R_curr @ omega_des_ee
-        
-        # tau_rot_cmd = self.Kd_rot * (omega_des_base - omega_current_base)
+            # Update logger variables so your plots stay accurate
+            self.last_F_cmd_ee = F_path
+            self.last_tau_cmd_ee = Tau_path
+            self.last_F_cmd_base_pure = F_base
+            self.last_tau_cmd_base = Tau_task_base
+            self.last_F_cmd_base_total = F_base
+            self.last_R_path = R_path
+            self.last_t_hat = t_hat
+            self.last_b_hat = b_hat
+            self.last_push_dir = t_hat[:2].copy()
 
-        # ====================================================================
-        # 5. ASSEMBLE WRENCH AND COMPUTE JOINT TORQUES
-        # ====================================================================
-        wrench_cmd = np.concatenate([F_cmd_base, tau_rot_cmd_base])
-        
-        J_full = self.get_jacobian_full()
-        tau_task = J_full.T @ wrench_cmd
-        tau = tau_task + self.get_gravity_compensation()
-
-        # Clip to hardware limits
-        tau_max = np.array([87, 87, 87, 87, 12, 12, 12])
-        tau = np.clip(tau, -tau_max, tau_max)
-
-        # Debug storage
-        self.last_F_cmd = F_cmd_base.copy()
-
-        return tau.astype(np.float32)
+            return tau.astype(np.float32)
