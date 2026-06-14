@@ -226,10 +226,45 @@ class PushController:
             Tau_task_base = R_path @ Tau_path
 
 
+            # 6. Assemble base-frame wrench
+            wrench_base = np.concatenate([F_base, Tau_task_base])
+
+            # ============================================================
+            # 7. MANUAL WRIST-ORIENTATION PD  (roll/pitch only; yaw stays with RL)
+            # Idea from your document.
+            # Holds the gripper upright so contact reaction can't tip it flat.
+            # Everything here is in the base frame {B}, matching wrench_base.
+            # The spring e_rot = z_ee x z_target is automatically free of yaw
+            # about n_hat, and the damper is projected to roll/pitch only, so
+            # this NEVER fights the RL's Tz action (which is purely along n_hat).
+            # ============================================================
+            R_ee = self.get_ee_orientation()        # gripper orientation in {B}
+            z_ee = R_ee[:, 2]                        # gripper local z-axis in {B}
+            w_ee = self.get_ee_angular_velocity()    # EE angular velocity in {B}
+    
+            # one-shot sign check: upright must read ~[0, 0, -1]
+            if not getattr(self, "_z_ee_checked", False):
+                print(f"[ORIENT PD] z_ee at first step = {np.round(z_ee, 3)} "
+                    f"(upright should be ~[0,0,-1]; if ~[0,0,+1], flip z_target sign)")
+                self._z_ee_checked = True
+    
+            # Target: gripper z points "down" toward the table, i.e. along -n_hat.
+            z_target = -n_hat
+    
+            # Restoring spring (cross product => no component along n_hat => yaw-free)
+            e_rot = np.cross(z_ee, z_target)
+    
+            # Damp ONLY roll/pitch: strip the n_hat component of angular velocity
+            w_rollpitch = w_ee - np.dot(w_ee, n_hat) * n_hat
+    
+            Tau_align = self.config.Kp_rot * e_rot - self.config.Kd_rot * w_rollpitch
+    
+            # Add to the moment part of the wrench (do NOT replace the RL yaw)
+            wrench_base[3:] += Tau_align
+
             # ====================================================================
             # 7. CALCULATE JOINT TORQUES
-            # ====================================================================
-            wrench_base = np.concatenate([F_base, Tau_task_base])         
+            # ====================================================================     
             J_full = self.get_jacobian_full()
             tau_task = J_full.T @ wrench_base
             tau = tau_task + self.get_gravity_compensation()

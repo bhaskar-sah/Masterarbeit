@@ -37,14 +37,14 @@ class EnvConfig:
     goal_position: Tuple[float, float] = (0.4, -0.4)
     n_trajectory_points: int = 50
     lookahead_points: int = 4
-    path_tolerance: float = 0.01
+    path_tolerance: float = 0.03
 
     # ============================================================
     # TIMING
     # ============================================================
     dt: float = 0.0005      # --> this was the crucial mistake
     n_substeps: int = 20
-    max_episode_length: int = 2500 # was 2500
+    max_episode_length: int = 3500 # was 2500
     control_dt: float = dt * n_substeps      # --> 0.0005 * 20 = 0.01 
 
     # ============================================================
@@ -72,11 +72,11 @@ class EnvConfig:
     w_force_smoothness: float = 0.01
     w_force: float = 0.05               # legacy
     target_force: float = 5.0
-    w_alignment: float = 0.5            # was 0.3
+    w_alignment: float = 0.1 # --> 0.5            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
     w_velocity_penalty: float = 100.0 # was 10.0 # was 50.0 # Weight for the speed
     v_target_limit: float = 0.08 # 8 cm/s speed limit
-    w_in_contact = 1.0 # was 1.0 # was 0.5
+    w_in_contact = 0.0 # was --> 1.0 # was 1.0 # was 0.5
 
 
     time_penalty: float = 0.1 # was 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005

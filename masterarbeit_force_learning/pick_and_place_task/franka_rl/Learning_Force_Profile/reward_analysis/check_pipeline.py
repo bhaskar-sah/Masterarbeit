@@ -332,7 +332,8 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
         ax_full = axes3[i * 2]
         ax_full.plot(time_axis, logs[cmd_key], label="F_cmd (Command)", color="red", linewidth=1.2)
         # Multiply measured force by -1 to mirror it appropriately as discussed
-        ax_full.plot(time_axis, -1.0 * logs[meas_key], label="F_meas (Actual)", color="blue", linewidth=1.2, alpha=0.7)
+        # ax_full.plot(time_axis, -1.0 * logs[meas_key], label="F_meas (Actual)", color="blue", linewidth=1.2, alpha=0.7)
+        ax_full.plot(time_axis, logs[meas_key], label="F_meas (Actual)", color="blue", linewidth=1.2, alpha=0.7)
         ax_full.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         ax_full.set_xlim(0.0, t_end_plot)
         ax_full.set_title(f"{title} - Full")
@@ -450,7 +451,8 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
     for i, (cmd, meas, title) in enumerate(force_base_specs):
         axes8[i].plot(time_axis, logs[cmd], label="F_cmd_base (Pure Rotation)", color="red", linewidth=1.5)
         # Note: Inverted measured force for visual alignment
-        axes8[i].plot(time_axis, -1.0 * logs[meas], label="F_meas_base (Actual Motor Output)", color="blue", alpha=0.7, linewidth=1.5)
+        # axes8[i].plot(time_axis, -1.0 * logs[meas], label="F_meas_base (Actual Motor Output)", color="blue", alpha=0.7, linewidth=1.5)
+        axes8[i].plot(time_axis, logs[meas], label="F_meas_base (Actual Motor Output)", color="blue", alpha=0.7, linewidth=1.5)
         axes8[i].axhline(y=0, color='black', linestyle='--', alpha=0.5)
         axes8[i].set_xlim(0.0, t_end_plot)
         axes8[i].set_title(title)
@@ -468,7 +470,8 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
     ]
     for i, (cmd, meas, title) in enumerate(tau_base_specs):
         axes9[i].plot(time_axis, logs[cmd], label="tau_cmd_base", color="red", linewidth=1.5)
-        axes9[i].plot(time_axis, -1.0 * logs[meas], label="tau_meas_base (Actual Motor Output)", color="blue", alpha=0.7, linewidth=1.5)
+        # axes9[i].plot(time_axis, -1.0 * logs[meas], label="tau_meas_base (Actual Motor Output)", color="blue", alpha=0.7, linewidth=1.5)
+        axes9[i].plot(time_axis, logs[meas], label="tau_meas_base (Actual Motor Output)", color="blue", alpha=0.7, linewidth=1.5)
         axes9[i].axhline(y=0, color='black', linestyle='--', alpha=0.5)
         axes9[i].set_xlim(0.0, t_end_plot)
         axes9[i].set_title(title)
@@ -582,20 +585,28 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
     # We append the Bird's Eye view LAST so the time-formatting loop ignores it!
     figures.append(("trajectory", fig7))
 
-    # 
-    fig12, axes12 = plt.subplots(3, 1, figsize=(16, 12), gridspec_kw={'hspace': 0.6})
+    # Plotting Path Tangential and Lateral Vectors (For Debugging only)
+    figPathFrame, axesPathFrame = plt.subplots(3, 1, figsize=(16, 12), gridspec_kw={'hspace': 0.6})
     normal_specs = [
-        ("t_hat_x", "orange"),
-        ("t_hat_y", "green"),
-        ("t_hat_z", "purple"),
+        ("t_hat_x", "b_hat_x"),
+        ("t_hat_y", "b_hat_y"),
+        ("t_hat_z", "b_hat_z"),
     ]
-    for i, (key, color) in enumerate(normal_specs):
-        axes12[i].plot(time_axis, np.degrees(logs[key]), color=color, linewidth=1.5)
-        axes12[i].axhline(y=0, color='black', linestyle='--', alpha=0.5)
-        axes12[i].set_xlim(0.0, t_end_plot)
-        axes12[i].grid(True, alpha=0.3)
-    fig12.suptitle("plotting normal", fontsize=14, fontweight='bold')
-    figures.append(("normals", fig12))
+    for i, (t_plot, b_plot) in enumerate(normal_specs):
+        axesPathFrame[i].plot(time_axis, logs[t_plot], label=t_plot, color="red", linewidth=1.5)
+        axesPathFrame[i].plot(time_axis, logs[b_plot], label=b_plot, color="blue",
+                      alpha=0.7, linewidth=1.5)
+        axesPathFrame[i].axhline(y=0, color='black', linestyle='--', alpha=0.5)
+        axesPathFrame[i].set_xlim(0.0, t_end_plot)
+        axesPathFrame[i].legend(loc='upper right')
+        axesPathFrame[i].grid(True, alpha=0.3)
+    figPathFrame.suptitle("Path Frame", fontsize=14, fontweight='bold')
+    figures.append(("path_frame", figPathFrame))
+
+
+
+
+
  
     # ==================== TICK FORMATTING (data-driven) ====================
     # All figures except the trajectory (bird's-eye view) get time-axis tick formatting.
