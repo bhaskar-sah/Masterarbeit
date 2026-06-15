@@ -58,12 +58,11 @@ class EnvConfig:
     # ============================================================
     Kz: float = 500.0
     Dz: float = 60.0
-    target_z: float = 0.84
 
     # ============================================================
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
     # ============================================================
-    w_progress: float = 120.0 # was 800 was 500.0 <- very high reward and 
+    w_progress: float = 100.0 # was 800 was 500.0 <- very high reward and
     w_deviation: float = 100.0 # 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
     max_deviation_reward: float = 5.0   # legacy, unused
     w_stability: float = 3.0
@@ -72,14 +71,15 @@ class EnvConfig:
     w_force_smoothness: float = 0.01
     w_force: float = 0.05               # legacy
     target_force: float = 5.0
-    w_alignment: float = 0.5            # was 0.3
+    w_alignment: float = 0.1            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
-    w_velocity_penalty: float = 100.0 # was 10.0 # was 50.0 # Weight for the speed
-    v_target_limit: float = 0.08 # 8 cm/s speed limit
-    w_in_contact = 1.0 # was 1.0 # was 0.5
+    w_velocity_penalty: float = 10.0 # was 10.0 # was 50.0 # Weight for the speed
+    v_target_limit: float = 0.4 # 40 cm/s speed limit
+    v_minimum: float = 0.02 #2cm/s
+    w_in_contact = 0.1 # was 1.0 # was 0.5
 
 
-    time_penalty: float = 0.1 # was 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
+    time_penalty: float = 0.2 # was 0.05 #3.0 # was 3.0 # was 0.5 # was 0.005
 
     success_bonus: float = 100.0
     failure_penalty: float = -100.0 # was -10.0 # was -100.0
@@ -90,7 +90,7 @@ class EnvConfig:
     # ============================================================
     # Layout: see observation.py for full index reference
     # 7 + 7 + 3 + 3 + 3 + 2  + 1 + 2 + 1 + 2 + 1 + 1 + 3 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 = 48
-    obs_dim: int = 48
+    obs_dim: int = 49
 
     # ============================================================
     # ACTION SPACE: [Fx_ee, Fy_ee, wz]

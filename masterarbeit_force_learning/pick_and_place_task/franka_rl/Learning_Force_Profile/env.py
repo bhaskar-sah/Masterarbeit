@@ -146,7 +146,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.data,
             self.traj_manager,
             self.contact_manager,
-            self.hand_body_id,
+            self.gripper_site_id,
             self.bottle_body_id,
             self.config
         )
@@ -156,7 +156,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.model,
             self.data,
             self.config,
-            self.hand_body_id,
+            self.gripper_site_id,
             self.bottle_body_id,
             self.traj_manager,
             self.contact_manager,
@@ -169,7 +169,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.traj_manager,
             self.contact_manager,
             self.bottle_body_id,
-            self.hand_body_id,
+            self.gripper_site_id,
             self.data,
             self.push_controller
         )
@@ -224,7 +224,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         ee_world = self.data.site_xpos[self.gripper_site_id]
         print(f"[RESET] gripper_center world z = {ee_world[2]:.4f}")
         print(f"[RESET] bottle world z         = {self.data.xpos[self.bottle_body_id][2]:.4f}")
-        print(f"[RESET] target_z (world)       = {self.config.target_z:.4f}")
+        #print(f"[RESET] target_z (world)       = {self.config.target_z:.4f}")
 
         # Get bottle start position
         bottle_start = self.data.xpos[self.bottle_body_id].copy()
@@ -279,7 +279,7 @@ class PandaPushTrajectoryEnv(gym.Env):
             mujoco.mj_step(self.model, self.data)
 
         # Grab true measured forces AFTER physics has stepped
-        F_meas_base, tau_meas_base = self.push_controller.get_measured_wrench()
+        F_meas_base, tau_meas_base = self.push_controller.get_measured_wrench_base()
         rpy = self.push_controller.get_rpy()
 
         obs = self.obs_builder.get_observation()
@@ -288,22 +288,20 @@ class PandaPushTrajectoryEnv(gym.Env):
         reward, info = self.reward_computer.compute_reward(action)
 
         # Get positions and force for logging
-
-        # ee_pos = self.push_controller.get_ee_position()
         ee_pos = self.data.site_xpos[self.gripper_site_id].copy()
         bottle_pos = self.data.xpos[self.bottle_body_id].copy()
         force = self.contact_manager.get_contact_force()
 
         # Fetch actual velocity from the controller
-        v_current = self.push_controller.get_ee_velocity()
+        v_current = self.push_controller.get_ee_vel_base()
 
         # Enhanced debug print
         if self.episode_length % 5 == 0:
             self.debug_printer.print_step(
                 self.episode_length, ee_pos, bottle_pos, action, reward, info,
-                self.push_controller.last_push_dir,
+                self.push_controller.last_t_hat,
                 None,  # p_des removed (pure velocity control)
-                self.push_controller.last_F_cmd_base_total, # <- now with new total
+                self.push_controller.last_F_path_cmd, # <- now with new total
             )
 
             # Log to CSV
@@ -311,11 +309,11 @@ class PandaPushTrajectoryEnv(gym.Env):
                 self.total_steps, self.episode_length, self.episode_num,
                 ee_pos, bottle_pos, None, # <- Added None for p_des
                 action, self.config,
-                self.push_controller.last_push_dir,  # Added push_dir back
-                self.push_controller.last_F_cmd_ee,
-                self.push_controller.last_tau_cmd_ee,
-                self.push_controller.last_F_cmd_base_pure,
-                self.push_controller.last_tau_cmd_base,
+                self.push_controller.last_t_hat,  # Added push_dir back
+                self.push_controller.last_F_path_cmd,
+                self.push_controller.last_tau_path_cmd,
+                self.push_controller.last_F_world_cmd,
+                self.push_controller.last_tau_world_cmd,
                 F_meas_base,
                 tau_meas_base,
                 rpy,
@@ -349,8 +347,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         if self.render_mode == "human":
             self.render()
 
-        info['F_cmd_path'] = self.push_controller.last_F_cmd_ee  # The raw RL action scaled to Newtons
-        info['F_cmd_base'] = self.push_controller.last_F_cmd_base_pure # The rotated global command
+        info['F_path_cmd'] = self.push_controller.last_F_path_cmd  # The raw RL action scaled to Newtons
+        info['F_world_cmd'] = self.push_controller.last_F_world_cmd # The rotated global command
         info['R_path'] = getattr(self.push_controller, 'last_R_path', np.eye(3))
         info['F_meas_base'] = self.contact_manager.get_contact_force() # The actual measured force
         info['t_hat'] = self.push_controller.last_t_hat

@@ -21,17 +21,19 @@ obs_dim: 45 -> 48
 
 import numpy as np
 
+
 # How many additional indices ahead to peek for future_push_dir
 FUTURE_LOOKAHEAD = 8
 
+
 class ObservationBuilder:
     def __init__(self, model, data, config,
-                 gripper_site_id, bottle_body_id,
+                 hand_body_id, bottle_body_id,
                  traj_manager, contact_manager, push_controller):
         self.model = model
         self.data = data
         self.config = config
-        self.gripper_site_id = gripper_site_id
+        self.hand_body_id = hand_body_id
         self.bottle_body_id = bottle_body_id
         self.traj_manager = traj_manager
         self.contact_manager = contact_manager
@@ -83,23 +85,32 @@ class ObservationBuilder:
         bottle_xy = bottle_pos[:2]
  
         # EE -> bottle (both in {B}, both the SITE point)
-        ee_to_bottle = bottle_pos - ee_pos
+        ee_to_bottle = bottle_xy - ee_pos[:2]
         dist_to_bottle = float(np.linalg.norm(ee_to_bottle))
         dir_to_bottle = (ee_to_bottle / (dist_to_bottle + 1e-6)).astype(np.float32)
  
         # # ---------- path frame {P} (shared with the controller's action) ----------
         # R_path, t_hat, b_hat, n_hat, _ = pc.compute_path_frame_base(bottle_xy_world)
 
+ 
         # frame-invariant scalar trajectory quantities
         push_dir_world, dist_to_target, _ = self.traj_manager.get_push_direction(bottle_xy_world)
         deviation_vec_world, deviation_mag = self.traj_manager.get_path_deviation(bottle_xy_world)
         progress = self.traj_manager.get_progress(bottle_xy_world)
 
         # ---------- path frame {P}, built inline ----------
-        R_path, t_hat, b_hat, n_hat, p_path = pc.compute_path_frame_base(bottle_xy_world)
+        # ... reconstructs the SAME frame compute_torque builds (same b_hat = n_hat x t_hat)
+        t_hat = w_R_b.T @ np.array([push_dir_world[0], push_dir_world[1], 0.0])
+        n_hat = w_R_b.T @ np.array([0.0, 0.0, 1.0])
+        nt = np.linalg.norm(t_hat)
+        t_hat = t_hat / nt if nt > 1e-6 else np.array([1.0, 0.0, 0.0])
+        n_hat = n_hat / np.linalg.norm(n_hat)
+        b_hat = np.cross(n_hat, t_hat)
+        b_hat /= np.linalg.norm(b_hat)
+        R_path = np.column_stack((t_hat, b_hat, n_hat))
  
         # ---- push direction as a HEADING, in {B} ----
-        push_dir_b = t_hat
+        push_dir_b = (w_R_b.T @ np.array([push_dir_world[0], push_dir_world[1], 0.0]))[:2].astype(np.float32)
  
         # ---- future push direction as a HEADING, in {B} ----
         fut_world = self._get_future_push_dir(bottle_xy_world)
@@ -116,32 +127,33 @@ class ObservationBuilder:
         is_touching = np.array([1.0 if is_touching_bool else 0.0], dtype=np.float32)
  
         # ---------- bottle tilt (frame-invariant scalar) ----------
-        bottle_tilt = np.array([pc.get_bottle_tilt()],dtype=np.float32)
+        bottle_mat = self.data.xmat[self.bottle_body_id].reshape(3, 3)
+        bottle_tilt = np.array([bottle_mat[2, 2]], dtype=np.float32)
  
         # ---------- gripper push axis in {B} XY ----------
-        ee_x_axis_world = pc.get_ee_x_dir_world()
-        ee_x_axis_xy = ee_x_axis_world[:2].astype(np.float32)
+        flange_axis_b = pc.get_ee_x_dir_world()
+        flange_axis_xy = flange_axis_b[:2].astype(np.float32)
  
         # ---------- direction cosines (frame-invariant; computed in {B}) ----------
         # cos(flange axis, push heading): yaw alignment cue
-        cos_alignment = float(np.dot(ee_x_axis_world, push_dir_b))
+        cos_alignment = float(np.dot(flange_axis_xy, push_dir_b))
         cos_alignment_arr = np.array([cos_alignment], dtype=np.float32)
-
-        # TODO: commented because cos_alignment does the same??
-        # # side_dot: dot(bottle->flange, push heading); -1 == perfectly behind bottle
-        # b2f = ee_pos[:2] - bottle_xy
-        # b2f_norm = np.linalg.norm(b2f)
-        # if b2f_norm > 1e-6:
-        #     side_dot = float(np.dot(b2f / b2f_norm, push_dir_b))
-        # else:
-        #     side_dot = 0.0
-        # side_dot_arr = np.array([side_dot], dtype=np.float32)
+ 
+        # side_dot: dot(bottle->flange, push heading); -1 == perfectly behind bottle
+        b2f = ee_pos[:2] - bottle_xy
+        b2f_norm = np.linalg.norm(b2f)
+        if b2f_norm > 1e-6:
+            side_dot = float(np.dot(b2f / b2f_norm, push_dir_b))
+        else:
+            side_dot = 0.0
+        side_dot_arr = np.array([side_dot], dtype=np.float32)
  
         # cos(measured force, push heading): the angle the agent reduces when
         # correcting deviation (1 = force along push, 0 = perpendicular)
-        f_mag = np.linalg.norm(f_robot_on_bottle)
-        if f_mag > 0.1:
-            cos_force_alignment = float(np.dot(f_robot_on_bottle / f_mag, push_dir_b))
+        f_xy = f_robot_on_bottle[:2]
+        f_xy_mag = np.linalg.norm(f_xy)
+        if f_xy_mag > 0.1:
+            cos_force_alignment = float(np.dot(f_xy / f_xy_mag, push_dir_b))
         else:
             cos_force_alignment = 0.0
         cos_force_alignment_arr = np.array([cos_force_alignment], dtype=np.float32)
@@ -153,7 +165,7 @@ class ObservationBuilder:
             ee_pos,                                          # 3   {B}, site
             ee_vel,                                          # 3   {B}, site
             bottle_pos,                                      # 3   {B}
-            dir_to_bottle,                                   # 3   {B}
+            dir_to_bottle,                                   # 2   {B}
             np.array([dist_to_bottle], dtype=np.float32),    # 1
             push_dir_b,                                      # 2   {B} heading
             np.array([dist_to_target], dtype=np.float32),    # 1
@@ -164,8 +176,9 @@ class ObservationBuilder:
             is_touching,                                     # 1
             bottle_tilt,                                     # 1
             ee_x_axis,                                       # 3   {B}
-            ee_x_axis_xy,                                  # 2   {B}
+            flange_axis_xy,                                  # 2   {B}
             cos_alignment_arr,                               # 1
+            side_dot_arr,                                    # 1
             cos_force_alignment_arr,                         # 1
             future_push_dir_b,                               # 2   {B} heading
         ])  # Total: 48

@@ -73,7 +73,8 @@ class DebugPrinter:
               f"r_contact: {info.get('r_contact', 0):+6.3f}  "
               f"r_align: {info.get('r_alignment', 0):+6.3f}  "
               f"r_vel: {info.get('r_velocity', 0):+6.6f}  "
-              f"t_pen: {info.get('time_penalty', 0):+6.3f}")
+              f"t_pen: {info.get('time_penalty', 0):+6.3f} "
+              f"r_total: {info.get('total_reward', 0):+6.3f}")
         print("-" * 70)
 
 

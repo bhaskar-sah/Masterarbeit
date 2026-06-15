@@ -780,8 +780,8 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
         hand_pos = env.data.xpos[env.hand_body_id].copy()
         
         # Velocities
-        v_curr = env.push_controller.get_ee_velocity()
-        w_curr = env.push_controller.get_ee_angular_velocity()
+        v_curr = env.push_controller.get_ee_vel_base()
+        w_curr = env.push_controller.get_ee_ang_vel_base()
         
         v_des_mag = np.linalg.norm([action[0] * env.config.v_max, action[1] * env.config.v_max])
         v_curr_mag = np.linalg.norm(v_curr[:2]) # Only XY for planar pushing

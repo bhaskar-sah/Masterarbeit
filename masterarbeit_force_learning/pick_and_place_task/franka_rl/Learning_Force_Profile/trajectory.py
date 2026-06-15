@@ -31,7 +31,8 @@ class TrajectoryManager:
         self.trajectory = None
         self.trajectory_type = "straight"
         self.total_arc_length = 0.0
- 
+
+ # TODO: trajectory generation should be in 3D not just planar 2D
     def generate_trajectory(self, bottle_start_xy, traj_type=None):
         """Generate trajectory from bottle start to goal."""
         if traj_type is not None:
@@ -85,22 +86,91 @@ class TrajectoryManager:
             return
         diffs = np.diff(self.trajectory, axis=0)
         self.total_arc_length = np.sum(np.linalg.norm(diffs, axis=1))
- 
+
+#TODO: Changed to give continues closest point and arc_length by projection on path
+    # commented previous calculation below
     def get_closest_point_on_trajectory(self, pos_xy):
-        """Returns (index, closest_point, arc_length_to_point)."""
-        if self.trajectory is None:
+        """
+        Fast version:
+        - uses argmin to find closest vertex
+        - only checks adjacent segments for projection
+
+        Returns:
+            best_idx      -> segment index
+            closest_point -> projected closest point
+            arc_length    -> continuous arc-length
+        """
+
+        traj = self.trajectory
+
+        if traj is None or len(traj) < 2:
             return 0, pos_xy.copy(), 0.0
- 
-        distances = np.linalg.norm(self.trajectory - pos_xy, axis=1)
+
+        # ---- 1. find closest trajectory point (vectorized, fast) ----
+        distances = np.linalg.norm(traj - pos_xy, axis=1)
         idx = int(np.argmin(distances))
-        closest_pt = self.trajectory[idx].copy()
- 
+
+        # ---- 2. select candidate segments ----
+        candidates = []
+
         if idx > 0:
-            arc_len = np.sum(np.linalg.norm(np.diff(self.trajectory[:idx + 1], axis=0), axis=1))
-        else:
-            arc_len = 0.0
- 
-        return idx, closest_pt, arc_len
+            candidates.append(idx - 1)
+
+        if idx < len(traj) - 1:
+            candidates.append(idx)
+
+        # ---- 3. project onto candidate segments ----
+        best_dist = float("inf")
+        best_point = None
+        best_idx = 0
+        best_t = 0.0
+
+        for i in candidates:
+            p0 = traj[i]
+            p1 = traj[i + 1]
+
+            v = p1 - p0
+            seg_len = np.linalg.norm(v)
+
+            if seg_len < 1e-8:
+                continue
+
+            v_unit = v / seg_len
+
+            w = pos_xy - p0
+            t = np.dot(w, v_unit)
+
+            t_clamped = np.clip(t, 0.0, seg_len)
+
+            proj = p0 + t_clamped * v_unit
+            dist = np.linalg.norm(pos_xy - proj)
+
+            if dist < best_dist:
+                best_dist = dist
+                best_point = proj
+                best_idx = i
+                best_t = t_clamped
+
+        # ---- 4. compute arc length ----
+        arc_length = np.sum(np.linalg.norm(np.diff(self.trajectory[:best_idx + 1], axis=0), axis=1)) + best_t
+
+        return best_idx, best_point, arc_length
+
+    # def get_closest_point_on_trajectory(self, pos_xy):
+    #     """Returns (index, closest_point, arc_length_to_point)."""
+    #     if self.trajectory is None:
+    #         return 0, pos_xy.copy(), 0.0
+    #
+    #     distances = np.linalg.norm(self.trajectory - pos_xy, axis=1)
+    #     idx = int(np.argmin(distances))
+    #     closest_pt = self.trajectory[idx].copy()
+    #
+    #     if idx > 0:
+    #         arc_len = np.sum(np.linalg.norm(np.diff(self.trajectory[:idx + 1], axis=0), axis=1))
+    #     else:
+    #         arc_len = 0.0
+    #
+    #     return idx, closest_pt, arc_len
  
     def get_path_deviation(self, bottle_xy):
         """Returns (deviation_vec, deviation_magnitude). Vec points bottle->trajectory."""
@@ -118,7 +188,7 @@ class TrajectoryManager:
         Falls back to one-sided differences at endpoints.
         """
         if self.trajectory is None or len(self.trajectory) < 2:
-            return np.array([0.0, -1.0], dtype=np.float32)
+            return np.array([0.0, 0.0], dtype=np.float32)
  
         idx, _, _ = self.get_closest_point_on_trajectory(bottle_xy)
         n = len(self.trajectory)
@@ -137,7 +207,7 @@ class TrajectoryManager:
         if norm > 1e-6:
             return (tangent / norm).astype(np.float32)
         else:
-            return np.array([0.0, -1.0], dtype=np.float32)
+            return np.array([0.0, 0.0], dtype=np.float32)
  
     def get_progress(self, bottle_xy):
         """Returns progress in [0, 1]."""
@@ -197,6 +267,6 @@ class TrajectoryManager:
         if norm > 1e-6:
             push_direction = push_direction / norm
         else:
-            push_direction = tangent_dir
+            push_direction = correction_dir
  
         return push_direction.astype(np.float32), distance, target_point

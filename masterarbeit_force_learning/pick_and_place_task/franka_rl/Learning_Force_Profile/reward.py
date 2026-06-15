@@ -6,12 +6,12 @@ import numpy as np
 
 class RewardComputer:
     def __init__(self, config, traj_manager, contact_manager,
-                 bottle_body_id, hand_body_id, data, push_controller):
+                 bottle_body_id, gripper_site_id, data, push_controller):
         self.config = config
         self.traj_manager = traj_manager
         self.contact_manager = contact_manager
         self.bottle_body_id = bottle_body_id
-        self.hand_body_id = hand_body_id
+        self.gripper_site_id = gripper_site_id
         self.data = data
         self.push_controller = push_controller
         self.prev_progress = 0.0
@@ -26,8 +26,7 @@ class RewardComputer:
         bottle_xy = bottle_pos[:2]
 
         # ee_pos = self.push_controller.get_ee_position()
-        ee_pos_world = self.data.site_xpos[self.push_controller.gripper_site_id].copy()
-        # hand_xy = ee_pos[:2]
+        ee_pos_world = self.data.site_xpos[self.gripper_site_id].copy()
         ee_xy = ee_pos_world[:2]
 
         deviation_vec, deviation_mag = self.traj_manager.get_path_deviation(bottle_xy)
@@ -43,7 +42,8 @@ class RewardComputer:
         force_mag = np.linalg.norm(force)
 
         # Sign convention: MuJoCo gives bottle-on-robot reaction.
-        f_robot_on_bottle = force 
+        f_robot_on_bottle = force
+        f_robot_on_bottle[2] = 0.0 # TODO: not sure if z-comp should just be removed but otherwise alignment with push_dir which is only calculated in 2D is bad.
 
         dist_to_bottle = np.linalg.norm(ee_xy - bottle_xy)
 
@@ -90,8 +90,8 @@ class RewardComputer:
         else: 
             r_contact = self.config.w_contact_loss * dist_to_bottle
             
-            if dist_to_bottle > 0.08:
-                r_contact -= 2.0
+        if dist_to_bottle > 0.08:
+            r_contact -= 2.0
 
         # ============================================================
         # 5. ALIGNMENT (Pure Direction, No Magnitude)
@@ -101,12 +101,14 @@ class RewardComputer:
         # ============================================================
         # 6. VELOCITY PENALTY
         # ============================================================
-        v_current_3d = self.push_controller.get_ee_velocity()
-        v_mag = np.linalg.norm(v_current_3d[:2])  # Only care about XY speed
+        v_current_3d = (self.push_controller.get_ee_vel_world())
+        v_mag = np.linalg.norm(v_current_3d)
         
-        if v_mag > self.config.v_target_limit:
+        if v_mag > self.config.v_target_limit: #penalise fast movement
             speed_excess = v_mag - self.config.v_target_limit
             r_velocity = -self.config.w_velocity_penalty * (speed_excess ** 2)
+        elif v_mag < self.config.v_minimum: # penalise no movement
+            r_velocity = -0.2
         else:
             r_velocity = 0.0
 
@@ -130,6 +132,7 @@ class RewardComputer:
         info['r_alignment'] = r_alignment
         info['f_along_tangent'] = f_along_tangent
         info['r_velocity'] = r_velocity
+        info['total_reward'] = total_reward
         info['time_penalty'] = -self.config.time_penalty
 
         # ============================================================
