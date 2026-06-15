@@ -92,14 +92,14 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
 
         # Load orientations
         rpy = env.push_controller.get_rpy()
-        R_path = env.push_controller.last_R_path.copy() if hasattr(env.push_controller, 'last_R_path') else np.eye(3)
+        R_path = env.push_controller.last_R_path.copy()
 
         # Load path vectors
         t_hat = env.push_controller.last_t_hat
         b_hat = env.push_controller.last_b_hat
 
         # Forces in local frame (path frame)
-        F_path_meas = R_path.T @ F_world_meas_contact
+        F_path_meas = R_path.T @ F_world_meas
         tau_path_meas = R_path.T @ (tau_world_meas - np.cross(ee_pos,F_world_meas))
 
         # ================= APPEND =================
@@ -339,15 +339,16 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
     # ==================== 3. Forces (X, Y, Z Components) ====================
     figForcesWorld, axesForcesWorld = plt.subplots(6, 1, figsize=(16, 22), gridspec_kw={'hspace': 0.8})
     force_specs = [
-        ("F_world_cmd_x", "F_world_meas_x", "Force World-x"),
-        ("F_world_cmd_y", "F_world_meas_y", "Force World-y"),
-        ("F_world_cmd_z", "F_world_meas_z", "Force World-z"),
+        ("F_world_cmd_x", "F_world_meas_x", "F_world_meas_contact_x", "Force World-x"),
+        ("F_world_cmd_y", "F_world_meas_y", "F_world_meas_contact_y", "Force World-y"),
+        ("F_world_cmd_z", "F_world_meas_z", "F_world_meas_contact_z", "Force World-z"),
     ]
-    for i, (cmd_key, meas_key, title) in enumerate(force_specs):
+    for i, (cmd_key, meas_key, meas_contact_key, title) in enumerate(force_specs):
         ax_full = axesForcesWorld[i * 2]
         ax_full.plot(time_axis, logs[cmd_key], label="F_cmd", color="red", linewidth=1.2)
         # Multiply measured force by -1 to mirror it appropriately as discussed
         ax_full.plot(time_axis, logs[meas_key], label="F_meas", color="blue", linewidth=1.2, alpha=0.7)
+        ax_full.plot(time_axis, logs[meas_contact_key], label="F_meas_contact", color="green", linewidth=1.2, alpha=0.7)
         ax_full.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         ax_full.set_xlim(0.0, t_end_plot)
         ax_full.set_title(f"{title} - Full")
@@ -357,6 +358,7 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
         ax_zoom = axesForcesWorld[i * 2 + 1]
         ax_zoom.plot(time_axis, logs[cmd_key], color="red", linewidth=1.5)
         ax_zoom.plot(time_axis, logs[meas_key], color="blue", linewidth=1.5, alpha=0.7)
+        ax_zoom.plot(time_axis, logs[meas_contact_key], color="green", linewidth=1.5, alpha=0.7)
         ax_zoom.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         ax_zoom.set_xlim(0.0, t_zoom)
         ax_zoom.set_title(f"{title} - Zoom: 0.0 - {t_zoom:.2f}s")
@@ -465,7 +467,7 @@ def plot_rewards(logs, trajectory, info, env, save_dir=None):
     for i, (cmd, meas, title) in enumerate(force_local_specs):
         axesForceLocal[i].plot(time_axis, logs[cmd], label="F_path_cmd", color="red", linewidth=1.5)
         # Note: Inverted measured force for visual alignment
-        axesForceLocal[i].plot(time_axis, logs[meas], label="F_path_meas (contact)", color="blue", alpha=0.7, linewidth=1.5)
+        axesForceLocal[i].plot(time_axis, logs[meas], label="F_path_meas (joints)", color="blue", alpha=0.7, linewidth=1.5)
         axesForceLocal[i].axhline(y=0, color='black', linestyle='--', alpha=0.5)
         axesForceLocal[i].set_xlim(0.0, t_end_plot)
         axesForceLocal[i].set_title(title)

@@ -63,7 +63,7 @@ class EnvConfig:
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
     # ============================================================
     w_progress: float = 100.0 # was 800 was 500.0 <- very high reward and
-    w_deviation: float = 100.0 # 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
+    w_deviation: float = 200.0 # 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
     max_deviation_reward: float = 5.0   # legacy, unused
     w_stability: float = 3.0
     w_contact: float = 0.0
@@ -74,7 +74,7 @@ class EnvConfig:
     w_alignment: float = 0.1            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
     w_velocity_penalty: float = 10.0 # was 10.0 # was 50.0 # Weight for the speed
-    v_target_limit: float = 0.4 # 40 cm/s speed limit
+    v_target_limit: float = 0.2 # 20 cm/s speed limit
     v_minimum: float = 0.02 #2cm/s
     w_in_contact = 0.1 # was 1.0 # was 0.5
 
