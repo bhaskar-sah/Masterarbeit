@@ -26,10 +26,20 @@ class EnvConfig:
     # ============================================================
     # ACTION LIMITS
     # ============================================================
-    # v_max: float = 0.10 # was 0.05
+    v_max: float = 0.10 # was 0.05
     w_max: float = 1.0 # was 0.3
     f_max: float = 20.0 # was 20.0
     tau_rot_max: float = 4.0
+
+    # ============================================================
+    # MOTION (IMPEDANCE) CONTROLLER GAINS  --  compute_torque_from_motion
+    # Starting points only -- tune on the first episode:
+    #   sluggish / can't move bottle -> raise kv ;  twitchy / unstable -> lower kv
+    # ============================================================
+    kp_normal: float = 5.0   # height error -> normal velocity command
+    kd_normal: float = 1.0   # normal-velocity damping
+    kv: float = 200.0        # linear impedance gain  (N per m/s of velocity error)
+    kw: float = 20.0         # angular impedance gain (N.m per rad/s of error)
 
     # ============================================================
     # TRAJECTORY

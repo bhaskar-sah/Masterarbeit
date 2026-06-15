@@ -176,7 +176,7 @@ class PushController:
         return R_path, t_hat, b_hat, n_hat, p_path
 
 
-    def compute_torque(self, action, tilt=None):
+    def compute_torque_from_wrench(self, action, tilt=None):
             # ====================================================================
             # 1. GET ROBOT STATE (Already in Base Frame)
             # ====================================================================
@@ -284,3 +284,120 @@ class PushController:
             self.last_push_dir = t_hat[:2].copy()
 
             return tau.astype(np.float32)
+
+
+    def compute_torque_from_motion(self, action, tilt=None):
+        """
+        MOTION-BASED controller (impedance / velocity-tracking), as a baseline
+        to compare against compute_torque_from_wrench.
+
+        Parallel structure to the wrench controller:
+            - same path frame {P} via compute_path_frame_base()
+            - same height regulation along n_hat (here as a velocity command)
+            - same manual wrist roll/pitch PD (holds the DOF the RL can't)
+            - same logger handoff
+
+        Difference: the RL action is a DESIRED TWIST in {P} (planar velocity +
+        yaw rate), and the joint torque comes from an impedance law that drives
+        the measured twist toward that desired twist:
+            F   = kv * (v_des_base - v_ee)
+            Tau = kw * (w_des_base - w_ee)
+        """
+        # ====================================================================
+        # 1. ROBOT STATE (base frame {B})
+        # ====================================================================
+        p_ee = self.get_ee_position()
+        v_ee = self.get_ee_velocity()
+        w_ee = self.get_ee_angular_velocity()
+
+        # ====================================================================
+        # 2. PATH FRAME {P}  (same single-source builder as the wrench ctrl)
+        # ====================================================================
+        bottle_xy_world = self.data.xpos[self.bottle_body_id][:2].copy()
+        R_path, t_hat, b_hat, n_hat, p_path = self.compute_path_frame_base(bottle_xy_world)
+
+        # ====================================================================
+        # 3. HEIGHT CONTROL  (velocity command along n_hat, with damping)
+        # ====================================================================
+        delta_p = p_ee - p_path
+        d = np.dot(delta_p, n_hat)        # signed height error along n_hat
+        d_dot = np.dot(v_ee, n_hat)       # current normal velocity
+        d_des = 0.0                       # stay on the path plane
+        v_normal = self.config.kp_normal * (d_des - d) - self.config.kd_normal * d_dot
+
+        # ====================================================================
+        # 4. RL POLICY = DESIRED TWIST IN PATH FRAME {P}
+        # ====================================================================
+        linear_vel_path = np.array([
+            action[0] * self.config.v_max,    # along t_hat
+            action[1] * self.config.v_max,    # along b_hat
+            v_normal,                         # along n_hat (controller, not RL)
+        ])
+        angular_vel_path = np.array([
+            0.0,
+            0.0,
+            action[2] * self.config.w_max,    # yaw rate about n_hat
+        ])
+
+        # ====================================================================
+        # 5. {P} -> {B}
+        # ====================================================================
+        linear_vel_base = R_path @ linear_vel_path
+        angular_vel_base = R_path @ angular_vel_path
+
+        # ====================================================================
+        # 6. IMPEDANCE LAW: torque from twist error
+        # ====================================================================
+        v_err = linear_vel_base - v_ee
+        w_err = angular_vel_base - w_ee
+
+        F_base = self.config.kv * v_err
+        Tau_task_base = self.config.kw * w_err
+
+        wrench_base = np.concatenate([F_base, Tau_task_base])
+
+        # ====================================================================
+        # 7. MANUAL WRIST-ORIENTATION PD  (roll/pitch only; yaw stays with RL)
+        # Identical to the wrench controller — holds the gripper upright so
+        # contact reaction can't tip it flat. Orthogonal to the RL yaw axis.
+        # ====================================================================
+        R_ee = self.get_ee_orientation()
+        z_ee = R_ee[:, 2]
+
+        if not getattr(self, "_z_ee_checked", False):
+            print(f"[ORIENT PD] z_ee at first step = {np.round(z_ee, 3)} "
+                  f"(upright should be ~[0,0,-1]; if ~[0,0,+1], flip z_target sign)")
+            self._z_ee_checked = True
+
+        z_target = -n_hat
+        e_rot = np.cross(z_ee, z_target)
+        w_rollpitch = w_ee - np.dot(w_ee, n_hat) * n_hat
+        Tau_align = self.config.Kp_rot * e_rot - self.config.Kd_rot * w_rollpitch
+
+        wrench_base[3:] += Tau_align
+
+        # ====================================================================
+        # 8. JOINT TORQUES  (J is base-frame, wrench is base-frame)
+        # ====================================================================
+        J_full = self.get_jacobian_full()
+        tau = J_full.T @ wrench_base + self.get_gravity_compensation()
+        tau_max = np.array([87, 87, 87, 87, 12, 12, 12])
+
+        tau = np.clip(tau, -tau_max, tau_max)
+
+        # ====================================================================
+        # 9. LOGGER HANDOFF  (same fields as the wrench controller, so that the
+        #    plots/CSV keep working. F_cmd_path here is the COMMANDED FORCE
+        #    that the impedance law produced -- not the raw action.)
+        # ====================================================================
+        self.last_F_cmd_ee = R_path.T @ F_base          # commanded force expressed in {P}
+        self.last_tau_cmd_ee = R_path.T @ Tau_task_base
+        self.last_F_cmd_base_pure = F_base
+        self.last_tau_cmd_base = Tau_task_base
+        self.last_F_cmd_base_total = F_base
+        self.last_R_path = R_path
+        self.last_t_hat = t_hat
+        self.last_b_hat = b_hat
+        self.last_push_dir = t_hat[:2].copy()
+
+        return tau.astype(np.float32)
