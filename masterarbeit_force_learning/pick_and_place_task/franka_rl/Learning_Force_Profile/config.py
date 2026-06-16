@@ -62,9 +62,13 @@ class EnvConfig:
     # ============================================================
     # Motion Based Controller
     # ============================================================
-    # Height controller
-    Kvz: float = 5.0
-    Dvz: float = 0.6
+    # Height controller RL
+    Kvz: float = 50.0
+    Dvz: float = 6.0
+
+    # Height controller manual
+    Kvz_manual: float = 5.0
+    Dvz_manual: float = 0.6
 
     # Anisotropic path gains for linear velocity
     kv_t: float = 80.0
@@ -78,7 +82,7 @@ class EnvConfig:
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)
     # ============================================================
     w_progress: float = 100.0 # was 800 was 500.0 <- very high reward and
-    w_deviation: float = 200.0 # 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
+    w_deviation: float = 400.0 # 50.0 # 100.0 # was 30.0          # was 100; now used quadratically
     max_deviation_reward: float = 5.0   # legacy, unused
     w_stability: float = 3.0
     w_contact: float = 0.0
@@ -88,7 +92,8 @@ class EnvConfig:
     target_force: float = 5.0
     w_alignment: float = 0.1            # was 0.3
     w_position: float = 15.0 # was 1.0             # was 0.5
-    w_velocity_penalty: float = 10.0 # was 10.0 # was 50.0 # Weight for the speed
+    w_speed_excess: float = 10.0 # was 10.0 # was 50.0 # Weight for the speed
+    w_velocity_penalty: float = 0.7
     v_target_limit: float = 0.2 # 20 cm/s speed limit
     v_minimum: float = 0.02 #2cm/s
     w_in_contact = 0.1 # was 1.0 # was 0.5
@@ -105,7 +110,7 @@ class EnvConfig:
     # ============================================================
     # Layout: see observation.py for full index reference
     # 7 + 7 + 3 + 3 + 3 + 2  + 1 + 2 + 1 + 2 + 1 + 1 + 3 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 = 48
-    obs_dim: int = 48
+    obs_dim: int = 49
 
     # ============================================================
     # ACTION SPACE: [Fx_ee, Fy_ee, wz]

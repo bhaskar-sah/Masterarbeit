@@ -106,11 +106,17 @@ class RewardComputer:
         
         if v_mag > self.config.v_target_limit: #penalise fast movement
             speed_excess = v_mag - self.config.v_target_limit
-            r_velocity = -self.config.w_velocity_penalty * (speed_excess ** 2)
+            r_velocity = -self.config.w_speed_excess * (speed_excess ** 2)
         elif v_mag < self.config.v_minimum: # penalise no movement
             r_velocity = -0.2
         else:
             r_velocity = 0.0
+
+
+        # ==========
+        # Penalize high speeds at the end
+        # ==========
+        #r_velocity += -self.config.w_velocity_penalty * v_mag * progress
 
         # ============================================================
         # TOTAL + TIME PENALTY FIX

@@ -250,7 +250,7 @@ TRAJECTORY_TYPE = "s_curve"
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v48_force_normal"
 # MODEL_DIR = f"trained_model_curriculum_only_push_v48_force_normal"
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v55_force_normal_frames"
-MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v60_force_normal_frames_roll_plus_pitch_para_tune"
+MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v2Marko_motion_path_frame"
 
 
 NUM_EPISODES = 10

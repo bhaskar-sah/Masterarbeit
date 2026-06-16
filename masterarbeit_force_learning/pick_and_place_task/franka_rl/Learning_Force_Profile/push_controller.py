@@ -180,7 +180,7 @@ class PushController:
         closest_pt_2d_world = bottle_xy_world + deviation_vec_world
 
         # TODO: trajectory calculations should be in 3D so that we don't need this manual table height here
-        target_z = getattr(self.config, "target_z", 0.84)
+        target_z = 0.8 #table_height
         p_path_world = np.array([closest_pt_2d_world[0], closest_pt_2d_world[1], target_z])
         t_hat_world = np.array([push_dir_2d_world[0], push_dir_2d_world[1], 0.0])
         n_hat_world = np.array([0.0, 0.0, 1.0])
@@ -462,7 +462,7 @@ class PushController:
         object_height = 0.12
         d_des = object_height * 0.4
 
-        v_normal = self.config.Kvz * (d_des - d) - self.config.Dvz * d_dot
+        v_normal = self.config.Kvz_manual * (d_des - d) - self.config.Dvz_manual * d_dot
 
         # ======================
         # Angular Alignment (end-effector keeps facing the path tangent)
