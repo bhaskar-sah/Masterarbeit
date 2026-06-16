@@ -249,7 +249,7 @@ TRAJECTORY_TYPE = "s_curve"
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v46_force_normal" # <--- Change to v26, v27, etc. in the future
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v48_force_normal"
 # MODEL_DIR = f"trained_model_curriculum_only_push_v48_force_normal"
-MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v2Marko_motion_path_frame"
+MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v3Marko_motion_path_frame"
 
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.00 # was 0.02  # Seconds between frames (0 for max speed)
@@ -272,8 +272,6 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 
 # Point directly to 'best_model.zip' inside the specific version folder
 model_path = os.path.join(current_dir, "saved_models_new", MODEL_DIR, "best_model.zip")
-
-
 
 # # =========================FOR CURRICULUM LEARNING RUN=============================
 # # Point to the final phase of the curriculum

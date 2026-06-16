@@ -657,7 +657,7 @@ def main():
     parser.add_argument("--save", action="store_true", help="Save the plot to the reward_results directory")
     args = parser.parse_args()
 
-    env = PandaPushTrajectoryEnv(render_mode=None, trajectory_type=args.trajectory_type)
+    env = PandaPushTrajectoryEnv(render_mode=None, trajectory_type=args.trajectory_type, controller_type="motion_RL")
 
     current_dir = os.path.dirname(os.path.realpath(__file__))
     parent_dir = os.path.dirname(current_dir)
