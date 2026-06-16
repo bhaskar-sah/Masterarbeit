@@ -299,6 +299,8 @@ class PandaPushTrajectoryEnv(gym.Env):
         reward, info = self.reward_computer.compute_reward(action)
 
         # Get positions and force for logging
+
+        # ee_pos = self.push_controller.get_ee_position()
         ee_pos = self.data.site_xpos[self.gripper_site_id].copy()
         bottle_pos = self.data.xpos[self.bottle_body_id].copy()
         force = self.contact_manager.get_contact_force()

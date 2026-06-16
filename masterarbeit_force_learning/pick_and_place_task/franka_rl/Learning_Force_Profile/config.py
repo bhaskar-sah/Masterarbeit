@@ -105,7 +105,7 @@ class EnvConfig:
     # ============================================================
     # Layout: see observation.py for full index reference
     # 7 + 7 + 3 + 3 + 3 + 2  + 1 + 2 + 1 + 2 + 1 + 1 + 3 + 1 + 1 + 3 + 2 + 1 + 1 + 1 + 2 = 48
-    obs_dim: int = 49
+    obs_dim: int = 48
 
     # ============================================================
     # ACTION SPACE: [Fx_ee, Fy_ee, wz]

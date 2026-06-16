@@ -163,7 +163,7 @@ class PushController:
         tau_meas_joints = self.data.qfrc_actuator[self.qvel_start:self.qvel_start + self.n_joints] - self.get_gravity_compensation()
         W_meas_world = np.linalg.pinv(J_full.T) @ tau_meas_joints
         return W_meas_world[:3], W_meas_world[3:]
-    
+
     # ====================================================================
     # PATH FRAME — single source of truth
     # ====================================================================
@@ -179,7 +179,7 @@ class PushController:
         # Therefore closest_pt = bottle_xy + deviation_vec.  (Sign fixed.)
         closest_pt_2d_world = bottle_xy_world + deviation_vec_world
 
- # TODO: trajectory calculations should be in 3D so that we don't need this manual table height here
+        # TODO: trajectory calculations should be in 3D so that we don't need this manual table height here
         target_z = getattr(self.config, "target_z", 0.84)
         p_path_world = np.array([closest_pt_2d_world[0], closest_pt_2d_world[1], target_z])
         t_hat_world = np.array([push_dir_2d_world[0], push_dir_2d_world[1], 0.0])

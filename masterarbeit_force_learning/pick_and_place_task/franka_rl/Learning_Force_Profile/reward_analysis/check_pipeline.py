@@ -179,6 +179,8 @@ def run_episode_and_collect(env, model, trajectory_type="straight"):
         logs["t_hat_y"].append(t_hat[1])
         logs["t_hat_z"].append(t_hat[2])
 
+
+
         step += 1
 
     for key in logs:
