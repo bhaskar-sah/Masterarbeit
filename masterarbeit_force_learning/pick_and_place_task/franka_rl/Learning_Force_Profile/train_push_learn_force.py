@@ -191,7 +191,7 @@ ALGORITHM = "PPO"
 TRAJECTORY_TYPE = "s_curve"
 TOTAL_TIMESTEPS = 2_000_000
 # MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v37_force"
-MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v3Marko_force_path_frame"
+MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v3Marko_motion_path_frame"
 
 # ==================== FOLDER SETUP ====================
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -213,7 +213,8 @@ print("="*60)
 # Create training environment
 env = PandaPushTrajectoryEnv(
     render_mode= "None", # "human", # was None,
-    trajectory_type=TRAJECTORY_TYPE
+    trajectory_type=TRAJECTORY_TYPE,
+    controller_type="motion_RL"
 )
 print("Environment Created!!!!!")
 
@@ -253,7 +254,7 @@ model = PPO(
     vf_coef=0.5,
     max_grad_norm=0.5,
     tensorboard_log=os.path.join(save_folder, "tensorboard_logs"), # Nested inside v25
-    device="cpu"  # Uses GPU if available
+    device="cpu"
 )
 
 # ==================== CALLBACKS ====================

@@ -26,7 +26,7 @@ class EnvConfig:
     # ============================================================
     # ACTION LIMITS
     # ============================================================
-    # v_max: float = 0.10 # was 0.05
+    v_max: float = 0.3 # was 0.05
     w_max: float = 1.0 # was 0.3
     f_max: float = 20.0 # was 20.0
     tau_rot_max: float = 4.0
@@ -54,10 +54,25 @@ class EnvConfig:
     tilt_threshold_slow: float = 0.90
 
     # ============================================================
-    # Height 
+    # Height Wrench Based Controller
     # ============================================================
-    Kz: float = 500.0
-    Dz: float = 60.0
+    Kfz: float = 500.0
+    Dfz: float = 60.0
+
+    # ============================================================
+    # Motion Based Controller
+    # ============================================================
+    # Height controller
+    Kvz: float = 5.0
+    Dvz: float = 0.6
+
+    # Anisotropic path gains for linear velocity
+    kv_t: float = 80.0
+    kv_b: float = 120.0
+    kv_n: float = 200.0
+
+    # Gain for angular velocity
+    Dw: float= 10.0
 
     # ============================================================
     # REWARD WEIGHTS — REBALANCED (from previous audit of reward.py)

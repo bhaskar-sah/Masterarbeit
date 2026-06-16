@@ -249,7 +249,7 @@ TRAJECTORY_TYPE = "s_curve"
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v46_force_normal" # <--- Change to v26, v27, etc. in the future
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v48_force_normal"
 # MODEL_DIR = f"trained_model_curriculum_only_push_v48_force_normal"
-MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v2Marko_force_path_frame"
+MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v2Marko_motion_path_frame"
 
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.00 # was 0.02  # Seconds between frames (0 for max speed)
@@ -262,7 +262,8 @@ print("="*60)
 # Create environment with rendering
 env = PandaPushTrajectoryEnv(
     render_mode="human",
-    trajectory_type= TRAJECTORY_TYPE # "curved"
+    trajectory_type= TRAJECTORY_TYPE, # "curved"
+    controller_type="motion_RL"
 )
 print("Environment created.")
 

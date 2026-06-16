@@ -38,13 +38,14 @@ class PandaPushTrajectoryEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, render_mode=None, trajectory_type="straight", config=None):
+    def __init__(self, render_mode=None, trajectory_type="straight", controller_type = "wrench_RL", config=None):
         """
         Initialize the environment.
 
         Args:
             render_mode: "human" for visualization, None for training
             trajectory_type: "straight", "curved", or "s_curve"
+            controller_type: "wrench_RL", "motion_RL", "motion_manual"
             config: EnvConfig (optional, uses default if None)
         """
         super().__init__()
@@ -52,6 +53,7 @@ class PandaPushTrajectoryEnv(gym.Env):
         # Configuration
         self.config = config if config is not None else get_default_config()
         self.trajectory_type = trajectory_type
+        self.controller_type = controller_type
         self.render_mode = render_mode
 
         # Load MuJoCo model
@@ -272,7 +274,16 @@ class PandaPushTrajectoryEnv(gym.Env):
             truncated: Whether episode was cut short (time limit)
             info: Additional information
         """
-        tau = self.push_controller.compute_torque(action)
+
+        if self.controller_type == "motion_manual":
+            tau = self.push_controller.compute_torque_from_manual_motion(action)
+        elif self.controller_type == "motion_RL":
+            tau = self.push_controller.compute_torque_from_motion(action)
+        elif self.controller_type == "wrench_RL":
+            tau = self.push_controller.compute_torque_from_wrench(action)
+        else:
+            raise ValueError(f"Unknown controller type: {self.controller_type}")
+
         self.data.ctrl[:7] = tau
 
         for _ in range(self.config.n_substeps):

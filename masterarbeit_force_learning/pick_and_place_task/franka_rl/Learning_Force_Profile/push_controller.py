@@ -231,7 +231,7 @@ class PushController:
         return np.array([0.0, 0.0, 1.0])
 
 
-    def compute_torque(self, action, tilt=None):
+    def compute_torque_from_wrench(self, action, tilt=None):
         # ====================================================================
         # 1. GET ROBOT STATE (Already in Base Frame)
         # ====================================================================
@@ -257,8 +257,8 @@ class PushController:
         d_des =  object_height*0.4
 
         F_normal = (
-            self.config.Kz * (d_des - d)
-            - self.config.Dz * d_dot
+                self.config.Kfz * (d_des - d)
+                - self.config.Dfz * d_dot
         )
 
         # ====================================================================
@@ -309,6 +309,225 @@ class PushController:
         # Update logger variables so your plots stay accurate
         self.last_F_path_cmd = F_path
         self.last_tau_path_cmd = Tau_path
+        self.last_F_world_cmd = F_world
+        self.last_tau_world_cmd = Tau_task_world
+        self.last_R_path = R_path_world
+        self.last_t_hat = t_hat_world
+        self.last_b_hat = b_hat_world
+
+        return tau.astype(np.float32)
+
+    def compute_torque_from_motion(self, action, tilt=None):
+        """
+        MOTION-BASED controller (impedance / velocity-tracking), as a baseline
+        to compare against compute_torque_from_wrench.
+
+        Parallel structure to the wrench controller:
+            - same path frame {P} via compute_path_frame_base()
+            - same height regulation along n_hat (here as a velocity command)
+            - same manual wrist roll/pitch PD (holds the DOF the RL can't)
+            - same logger handoff
+
+        Difference: the RL action is a DESIRED TWIST in {P} (planar velocity +
+        yaw rate), and the joint torque comes from an impedance law that drives
+        the measured twist toward that desired twist:
+            F   = kv * (v_des_base - v_ee)
+            Tau = kw * (w_des_base - w_ee)
+        """
+        # ====================================================================
+        # 1. ROBOT STATE {W} (in world frame)
+        # ====================================================================
+        p_ee_world = self.get_ee_pos_world()
+        v_ee_world = self.get_ee_vel_world()
+        w_ee_world = self.get_ee_ang_vel_world()
+
+        # ====================================================================
+        # 2. PATH FRAME {P}  (same single-source builder as the wrench ctrl)
+        # ====================================================================
+        p_bottle_world = self.data.xpos[self.bottle_body_id].copy()
+        R_path_world, t_hat_world, b_hat_world, n_hat_world, p_path_world = self.compute_path_frame_world(
+            p_bottle_world[:2])
+
+        # ====================================================================
+        # 3. HEIGHT CONTROL  (velocity command along n_hat, with damping)
+        # ====================================================================
+        delta_p = p_ee_world - p_path_world
+        d = np.dot(delta_p, n_hat_world)
+        d_dot = np.dot(v_ee_world, n_hat_world)
+
+        # d_des is object-height * 0.4 -> push a little bit below (0.4) the objects center
+        # TODO: Do that programatically by reading height from mujoco geometry (for now manual)
+        object_height = 0.12
+        d_des = object_height * 0.4
+
+        v_normal = self.config.Kvz * (d_des - d) - self.config.Dvz * d_dot
+
+        # ====================================================================
+        # 4. RL POLICY = DESIRED TWIST IN PATH FRAME {P}
+        # ====================================================================
+        linear_vel_path = np.array([
+            action[0] * self.config.v_max,  # along t_hat
+            action[1] * self.config.v_max,  # along b_hat
+            v_normal,  # along n_hat (controller, not RL)
+        ])
+        angular_vel_path = np.array([
+            0.0,
+            0.0,
+            action[2] * self.config.w_max,  # yaw rate about n_hat
+        ])
+
+        # ====================================================================
+        # 5. {P} -> {W}
+        # ====================================================================
+        linear_vel_world = R_path_world @ linear_vel_path
+        angular_vel_world = R_path_world @ angular_vel_path
+
+        # ====================================================================
+        # 6. IMPEDANCE LAW: torque from twist error
+        # ====================================================================
+        v_err = linear_vel_world - v_ee_world
+        w_err = angular_vel_world - w_ee_world
+
+        K_v = R_path_world @ np.diag([self.config.kv_t, self.config.kv_b, self.config.kv_n]) @ R_path_world.T
+        F_world = K_v @ v_err
+        Tau_task_world = self.config.Dw * w_err
+
+        wrench_world = np.concatenate([F_world, Tau_task_world])
+
+        # ===============
+        # Add orientation control
+        # ===============
+        R_ee_world = self.get_ee_orientation_world()
+        z_ee_world = R_ee_world[:, 2]
+        e_rot = np.cross(z_ee_world, -n_hat_world)
+        tau_align = (
+                self.config.Kp_rot * e_rot
+            # - self.config.Kd_rot * w_ee_world
+        )
+        wrench_world[3:] += tau_align
+
+        # ====================================================================
+        # 8. JOINT TORQUES  (J is base-frame, wrench is base-frame)
+        # ====================================================================
+        J_full = self.get_jacobian_full_world()
+        tau = J_full.T @ wrench_world + self.get_gravity_compensation()
+        tau_max = np.array([87, 87, 87, 87, 12, 12, 12])
+
+        tau = np.clip(tau, -tau_max, tau_max)
+
+        # ====================================================================
+        # 9. LOGGER HANDOFF  (same fields as the wrench controller, so that the
+        #    plots/CSV keep working. F_cmd_path here is the COMMANDED FORCE
+        #    that the impedance law produced -- not the raw action.)
+        # ====================================================================
+        # Update logger variables so your plots stay accurate
+        self.last_F_path_cmd = R_path_world.T @ F_world
+        self.last_tau_path_cmd = R_path_world.T @ Tau_task_world
+        self.last_F_world_cmd = F_world
+        self.last_tau_world_cmd = Tau_task_world
+        self.last_R_path = R_path_world
+        self.last_t_hat = t_hat_world
+        self.last_b_hat = b_hat_world
+
+        return tau.astype(np.float32)
+
+    def compute_torque_from_manual_motion(self, action, tilt=None):
+        """
+        MOTION-BASED controller without RL actions. Input is only a tangential desired velocity vx.
+        Rest of the motion is manually created to follow the trajectory.
+        """
+        # ====================================================================
+        # 1. ROBOT STATE {W} (in world frame)
+        # ====================================================================
+        p_ee_world = self.get_ee_pos_world()
+        v_ee_world = self.get_ee_vel_world()
+        w_ee_world = self.get_ee_ang_vel_world()
+
+        # ====================================================================
+        # 2. PATH FRAME {P}  (same single-source builder as the wrench ctrl)
+        # ====================================================================
+        p_bottle_world = self.data.xpos[self.bottle_body_id].copy()
+        R_path_world, t_hat_world, b_hat_world, n_hat_world, p_path_world = self.compute_path_frame_world(
+            p_bottle_world[:2])
+
+        # ====================================================================
+        # 3. HEIGHT CONTROL  (velocity command along n_hat, with damping)
+        # ====================================================================
+        delta_p = p_ee_world - p_path_world
+        d = np.dot(delta_p, n_hat_world)
+        d_dot = np.dot(v_ee_world, n_hat_world)
+
+        # d_des is object-height * 0.4 -> push a little bit below (0.4) the objects center
+        # TODO: Do that programatically by reading height from mujoco geometry (for now manual)
+        object_height = 0.12
+        d_des = object_height * 0.4
+
+        v_normal = self.config.Kvz * (d_des - d) - self.config.Dvz * d_dot
+
+        # ======================
+        # Angular Alignment (end-effector keeps facing the path tangent)
+        # ======================
+        R_ee_world = self.get_ee_orientation_world()
+        y_ee_world = R_ee_world[:,1]
+
+        e_rot_y_world = np.cross(y_ee_world, b_hat_world)
+
+        # ====================================================================
+        # 4. RL POLICY = DESIRED TWIST IN PATH FRAME {P}
+        # ====================================================================
+        linear_vel_path = np.array([
+            action[0] * self.config.v_max,  # along t_hat
+            0.0,  # along b_hat
+            v_normal,  # along n_hat (controller, not RL)
+        ])
+        angular_vel_path = 10.0*R_path_world.T @ e_rot_y_world
+
+        # ====================================================================
+        # 5. {P} -> {W}
+        # ====================================================================
+        linear_vel_world = R_path_world @ linear_vel_path
+        angular_vel_world = R_path_world @ angular_vel_path
+
+        # ====================================================================
+        # 6. IMPEDANCE LAW: torque from twist error
+        # ====================================================================
+        v_err = linear_vel_world - v_ee_world
+        w_err = angular_vel_world - w_ee_world
+
+        K_v = R_path_world @ np.diag([self.config.kv_t, self.config.kv_b, self.config.kv_n]) @ R_path_world.T
+        F_world = K_v @ v_err
+        Tau_task_world = self.config.Dw * w_err
+
+        wrench_world = np.concatenate([F_world, Tau_task_world])
+
+        # ===============
+        # Add orientation control
+        # ===============
+        z_ee_world = R_ee_world[:, 2]
+        e_rot = np.cross(z_ee_world, -n_hat_world)
+        tau_align = (
+                self.config.Kp_rot * e_rot
+            # - self.config.Kd_rot * w_ee_world
+        )
+        wrench_world[3:] += tau_align
+
+        # ====================================================================
+        # 8. JOINT TORQUES  (J is base-frame, wrench is base-frame)
+        # ====================================================================
+        J_full = self.get_jacobian_full_world()
+        tau = J_full.T @ wrench_world + self.get_gravity_compensation()
+        tau_max = np.array([87, 87, 87, 87, 12, 12, 12])
+
+        tau = np.clip(tau, -tau_max, tau_max)
+
+        # ====================================================================
+        # 9. LOGGER HANDOFF  (same fields as the wrench controller, so that the
+        #    plots/CSV keep working. F_cmd_path here is the COMMANDED FORCE
+        #    that the impedance law produced -- not the raw action.)
+        # ====================================================================
+        # Update logger variables so your plots stay accurate
+        self.last_F_path_cmd = R_path_world.T @ F_world
+        self.last_tau_path_cmd = R_path_world.T @ Tau_task_world
         self.last_F_world_cmd = F_world
         self.last_tau_world_cmd = Tau_task_world
         self.last_R_path = R_path_world

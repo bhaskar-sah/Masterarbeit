@@ -668,7 +668,7 @@ def main():
         print(f"ERROR: Could not find best_model.zip at {model_path}")
         exit()
 
-    model = PPO.load(model_path, env=env)
+    model = PPO.load(model_path, env=env, device="cpu")
     print(f"Running episode with trajectory: {args.trajectory_type}...")
     logs, trajectory, info = run_episode_and_collect(env, model, args.trajectory_type)
 
