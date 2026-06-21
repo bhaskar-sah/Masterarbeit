@@ -272,8 +272,8 @@ class PandaPushTrajectoryEnv(gym.Env):
             truncated: Whether episode was cut short (time limit)
             info: Additional information
         """
-        # tau = self.push_controller.compute_torque_from_wrench(action)
-        tau = self.push_controller.compute_torque_from_motion(action)
+        tau = self.push_controller.compute_torque_from_wrench(action)
+        # tau = self.push_controller.compute_torque_from_motion(action)
         self.data.ctrl[:7] = tau
 
         for _ in range(self.config.n_substeps):
