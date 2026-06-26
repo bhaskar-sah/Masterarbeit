@@ -191,7 +191,7 @@ ALGORITHM = "PPO"
 TRAJECTORY_TYPE = "s_curve"
 TOTAL_TIMESTEPS = 2_000_000
 # MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v37_force"
-MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v60_force_normal_frames_roll_plus_pitch_para_tune"
+MODEL_NAME = f"trained_model_{TRAJECTORY_TYPE}_only_push_v60_force_normal_motion"
 
 # ==================== FOLDER SETUP ====================
 current_script_dir = os.path.dirname(os.path.realpath(__file__))

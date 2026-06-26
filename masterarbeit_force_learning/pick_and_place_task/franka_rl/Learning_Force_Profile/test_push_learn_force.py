@@ -250,8 +250,9 @@ TRAJECTORY_TYPE = "s_curve"
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v48_force_normal"
 # MODEL_DIR = f"trained_model_curriculum_only_push_v48_force_normal"
 # MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v55_force_normal_frames"
-MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v60_force_normal_frames_roll_plus_pitch_para_tune"
-
+# MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v60_force_normal_frames_roll_plus_pitch_para_tune"
+# MODEL_DIR = f"trained_model_{TRAJECTORY_TYPE}_only_push_v60_force_normal_motion"
+MODEL_DIR = "trained_model_dr_mass_curriculum_v62"
 
 NUM_EPISODES = 10
 VISUAL_DELAY = 0.00 # was 0.02  # Seconds between frames (0 for max speed)
