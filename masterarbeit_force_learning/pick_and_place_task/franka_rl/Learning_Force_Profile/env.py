@@ -123,6 +123,20 @@ class PandaPushTrajectoryEnv(gym.Env):
             self.right_finger_body_id
         }
 
+        # ---- Domain randomization bookkeeping ----
+        # All geoms belonging to the bottle body (friction lives on the
+        # collision cylinder + the 6 contact spheres in your XML).
+        self.bottle_geom_ids = [
+            gid for gid in range(self.model.ngeom)
+            if self.model.geom_bodyid[gid] == self.bottle_body_id
+        ]
+        # Nominal mass/inertia so we can scale inertia with mass (fixed geometry
+        # => inertia scales linearly with mass).
+        self.bottle_nominal_mass = float(self.model.body_mass[self.bottle_body_id])
+        self.bottle_nominal_inertia = self.model.body_inertia[self.bottle_body_id].copy()
+        self.last_mass = self.bottle_nominal_mass
+        self.last_fric = None
+
     def _init_managers(self):
         """Initialize all manager objects."""
         # Trajectory manager
@@ -207,6 +221,20 @@ class PandaPushTrajectoryEnv(gym.Env):
 
         # Reset MuJoCo to push_start keyframe
         mujoco.mj_resetDataKeyframe(self.model, self.data, self.push_start_key_id)
+        
+        # ---- Domain randomization: bottle mass, inertia, sliding friction ----
+        # body_mass / geom_friction are MODEL fields, so they persist across the
+        # data reset above; we re-draw them every episode here.
+        if getattr(self.config, "randomize_dynamics", False):
+            m = float(self.np_random.uniform(self.config.mass_min, self.config.mass_max))
+            f = float(self.np_random.uniform(self.config.fric_min, self.config.fric_max))
+            scale = m / self.bottle_nominal_mass
+            self.model.body_mass[self.bottle_body_id] = m
+            self.model.body_inertia[self.bottle_body_id] = self.bottle_nominal_inertia * scale
+            for gid in self.bottle_geom_ids:
+                self.model.geom_friction[gid, 0] = f   # [0] = sliding coefficient
+            self.last_mass, self.last_fric = m, f
+
         mujoco.mj_forward(self.model, self.data)
 
         # Let simulation settle with gravity compensation

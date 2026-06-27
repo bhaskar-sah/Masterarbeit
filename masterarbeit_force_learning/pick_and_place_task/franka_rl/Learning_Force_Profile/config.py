@@ -108,9 +108,17 @@ class EnvConfig:
     action_dim: int = 3
 
     # ============================================================
-    # ACTION MODE
+    # DOMAIN RANDOMIZATION  (per-episode bottle dynamics)
+    # NOTE FOR ME: task_table sliding friction is 0.2 in the XML. MuJoCo combines
+    # contact friction by element-wise MAX at equal geom priority, so keep
+    # fric_min ABOVE 0.2 or the table dominates and friction stops varying.
+    # Set the ranges around your real bottle; nominal here is mass 0.5, fric 0.8.
     # ============================================================
-    # action_mode: str = "force"   # "velocity" or "force"
+    randomize_dynamics: bool = True
+    mass_min: float = 0.2
+    mass_max: float = 0.8
+    fric_min: float = 0.3
+    fric_max: float = 1.0
 
 
 def get_default_config() -> EnvConfig:
